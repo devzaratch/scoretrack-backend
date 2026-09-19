@@ -1,5 +1,7 @@
-FROM golang:1.22-alpine AS builder
+FROM golang:alpine AS builder
 WORKDIR /app
+ENV GOTOOLCHAIN=auto
+RUN apk --no-cache add git ca-certificates
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
