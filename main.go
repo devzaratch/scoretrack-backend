@@ -145,17 +145,33 @@ func main() {
 	// 2. ตั้งค่า CORS รองรับทั้ง Localhost และ Production บน Vercel
 	r.Use(cors.New(cors.Config{
 		AllowOriginFunc: func(origin string) bool {
-			if strings.HasSuffix(origin, ".vercel.app") ||
-				strings.HasPrefix(origin, "http://localhost:") ||
+			// โดเมน production ตั้งค่าผ่าน env ALLOWED_ORIGINS (คั่นด้วย comma)
+			// ตัวอย่าง: ALLOWED_ORIGINS=https://doballlaos.com,https://www.doballlaos.com
+			for _, allowed := range strings.Split(getEnv("ALLOWED_ORIGINS", ""), ",") {
+				allowed = strings.TrimSpace(allowed)
+				if allowed != "" && strings.EqualFold(allowed, origin) {
+					return true
+				}
+			}
+
+			// อนุญาต localhost เสมอสำหรับการพัฒนา
+			if strings.HasPrefix(origin, "http://localhost:") ||
 				strings.HasPrefix(origin, "http://127.0.0.1:") ||
 				origin == "http://localhost" ||
 				origin == "http://127.0.0.1" {
 				return true
 			}
+
+			// เปิด preview บน Vercel ได้เมื่อตั้ง ALLOW_VERCEL_PREVIEW=true เท่านั้น
+			// (อันตราย: ใครก็สร้างเว็บ *.vercel.app มาเรียก API เราได้)
+			if getEnv("ALLOW_VERCEL_PREVIEW", "false") == "true" && strings.HasSuffix(origin, ".vercel.app") {
+				return true
+			}
+
 			return false
 		},
 		AllowMethods:     []string{"GET", "POST", "OPTIONS", "PUT", "DELETE"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With", "X-Admin-Token"},
 		ExposeHeaders:    []string{"Content-Length", "X-Cache", "X-Data-Source"},
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
@@ -253,7 +269,7 @@ func main() {
 		// Match Details
 		rg.GET("/match/:id", matchDetailsHandler)
 		rg.GET("/match/:id/stream", handleGetMatchStream)
-		rg.POST("/match/:id/stream", handleSaveMatchStream)
+		// ❗ POST /match/:id/stream ย้ายไป adminGroup ด้านล่าง (ต้องมี ADMIN_TOKEN)
 		rg.GET("/match/:id/commentary", matchDetailsHandler)
 		rg.GET("/match", matchDetailsHandler)
 		rg.GET("/matchDetails", matchDetailsHandler)
@@ -291,6 +307,16 @@ func main() {
 
 	nestedApiGroup := r.Group("/api/api")
 	setupRoutes(nestedApiGroup)
+
+	// ---------------------------------------------------------
+	// Admin-only routes (ต้องส่ง header X-Admin-Token)
+	// ---------------------------------------------------------
+	adminRoutes := func(rg *gin.RouterGroup) {
+		rg.POST("/match/:id/stream", handleSaveMatchStream)
+		rg.GET("/admin/verify", handleAdminVerify)
+	}
+	adminRoutes(r.Group("/api", AdminAuthMiddleware()))
+	adminRoutes(r.Group("/api/api", AdminAuthMiddleware()))
 
 	port := getEnv("PORT", "8080")
 	log.Printf("🚀 Go Backend (พร้อม WebSocket Live Server & Dynamic Engine) เริ่มทำงานที่ http://localhost:%s", port)
@@ -645,7 +671,17 @@ func handleFCMRegister(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Token ไม่ถูกต้อง"})
 		return
 	}
-	log.Printf("📲 รับ FCM Push Token สำเร็จ: %s", body.FCMToken)
+	if strings.TrimSpace(body.FCMToken) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Token ว่าง"})
+		return
+	}
+
+	// บันทึก token ลงฐานจริงๆ (เดิมแค่ log ทิ้ง ทำให้ push ใช้ไม่ได้)
+	if GlobalDB != nil {
+		GlobalDB.SaveFCMToken(body.FCMToken)
+	}
+
+	log.Printf("📲 ลงทะเบียน FCM Push Token สำเร็จ (ท้าย token: ...%s)", tailOf(body.FCMToken, 8))
 	c.JSON(http.StatusOK, gin.H{"status": "registered"})
 }
 

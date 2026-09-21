@@ -21,6 +21,7 @@ type StoreData struct {
 	UserFavorites      map[string][]int                    `json:"user_favorites"`
 	MatchSubscriptions map[int][]string                    `json:"match_subscriptions"`
 	MatchStreams       map[string][]StreamServerOption     `json:"match_streams"`
+	FCMTokens          map[string]int64                    `json:"fcm_tokens"` // token -> unix timestamp ที่ลงทะเบียนล่าสุด
 }
 
 type PersistentDB struct {
@@ -46,6 +47,7 @@ func InitDB() *PersistentDB {
 			UserFavorites:      make(map[string][]int),
 			MatchSubscriptions: make(map[int][]string),
 			MatchStreams:       make(map[string][]StreamServerOption),
+			FCMTokens:          make(map[string]int64),
 		},
 	}
 
@@ -64,6 +66,9 @@ func InitDB() *PersistentDB {
 			}
 			if loaded.MatchStreams != nil {
 				db.data.MatchStreams = loaded.MatchStreams
+			}
+			if loaded.FCMTokens != nil {
+				db.data.FCMTokens = loaded.FCMTokens
 			}
 			log.Printf("📦 Loaded persistent database from %s", dbPath)
 		}
@@ -245,3 +250,85 @@ func (db *PersistentDB) SaveMatchStreams(matchID string, streams []StreamServerO
 	db.dirty = true
 }
 
+// ---------------------------------------------------------
+// FCM Push Token Storage
+// ---------------------------------------------------------
+
+// SaveFCMToken เก็บ token ไว้พร้อม timestamp (กัน token ซ้ำอัตโนมัติ)
+func (db *PersistentDB) SaveFCMToken(token string) {
+	if token == "" {
+		return
+	}
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	if db.data.FCMTokens == nil {
+		db.data.FCMTokens = make(map[string]int64)
+	}
+	db.data.FCMTokens[token] = time.Now().Unix()
+	db.dirty = true
+}
+
+// GetFCMTokens คืน token ทั้งหมดที่ลงทะเบียนไว้
+func (db *PersistentDB) GetFCMTokens() []string {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	tokens := make([]string, 0, len(db.data.FCMTokens))
+	for t := range db.data.FCMTokens {
+		tokens = append(tokens, t)
+	}
+	return tokens
+}
+
+// RemoveFCMToken ลบ token ที่ใช้ไม่ได้ออก (เช่น FCM ตอบ unregistered)
+func (db *PersistentDB) RemoveFCMToken(token string) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	delete(db.data.FCMTokens, token)
+	db.dirty = true
+}
+
+// PruneFCMTokens ลบ token ที่เก่าเกิน maxAge (เรียกเป็นรอบๆ กันไฟล์บวม)
+func (db *PersistentDB) PruneFCMTokens(maxAge time.Duration) int {
+	cutoff := time.Now().Add(-maxAge).Unix()
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	removed := 0
+	for token, ts := range db.data.FCMTokens {
+		if ts < cutoff {
+			delete(db.data.FCMTokens, token)
+			removed++
+		}
+	}
+	if removed > 0 {
+		db.dirty = true
+	}
+	return removed
+}
+
+// ---------------------------------------------------------
+// Graceful Shutdown Flush
+// ---------------------------------------------------------
+
+// FlushNow บันทึกลงไฟล์ทันที ไม่รอ sync worker
+// เรียกตอนโปรเกรมกำลังปิด เพื่อไม่ให้ข้อมูล 3 วินาทีสุดท้ายหาย
+func (db *PersistentDB) FlushNow() error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	jsonData, err := json.MarshalIndent(db.data, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	tmpPath := db.filePath + ".tmp"
+	if err := os.WriteFile(tmpPath, jsonData, 0644); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, db.filePath); err != nil {
+		return err
+	}
+
+	db.dirty = false
+	log.Printf("💾 บันทึกข้อมูลลงดิสก์ครบก่อนปิดเซิร์ฟเวอร์แล้ว (%s)", db.filePath)
+	return nil
+}

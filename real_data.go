@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -126,17 +127,45 @@ type TSDBPlayer struct {
 	STRDescriptionEN string `json:"strDescriptionEN"`
 }
 
+// cacheEntry = ข้อมูลในแคชพร้อมเวลาหมดอายุ
+type cacheEntry struct {
+	data      []byte
+	expiresAt time.Time
+}
+
+const (
+	tsdbCacheTTL     = 5 * time.Minute // ข้อมูลในแคชอยู่ได้นานแค่ไหน
+	tsdbCacheMaxSize = 500              // จำกัดจำนวน entry กัน memory leak
+)
+
 var (
 	tsdbHTTPClient = &http.Client{Timeout: 6 * time.Second}
-	cacheMap       = make(map[string][]byte)
+	cacheMap       = make(map[string]cacheEntry)
 	cacheMapMu     sync.RWMutex
 )
 
+// pruneCacheLocked ลบ entry ที่หมดอายุออก
+// หมายเหตุ: ต้องถือ cacheMapMu.Lock() ไว้ก่อนเรียก
+func pruneCacheLocked() {
+	now := time.Now()
+	for k, v := range cacheMap {
+		if now.After(v.expiresAt) {
+			delete(cacheMap, k)
+		}
+	}
+
+	// ถ้ายังเกินลิมิต ล้างเพิ่มเติมทั้งก้อน (กัน RAM บวมแบบไม่มีขอบเขต)
+	if len(cacheMap) > tsdbCacheMaxSize {
+		log.Printf("⚠️ TSDB cache เกิน %d entry → ล้างแคชทั้งหมด", tsdbCacheMaxSize)
+		cacheMap = make(map[string]cacheEntry)
+	}
+}
+
 func fetchTSDB(url string) ([]byte, error) {
 	cacheMapMu.RLock()
-	if cached, found := cacheMap[url]; found {
+	if cached, found := cacheMap[url]; found && time.Now().Before(cached.expiresAt) {
 		cacheMapMu.RUnlock()
-		return cached, nil
+		return cached.data, nil
 	}
 	cacheMapMu.RUnlock()
 
@@ -162,7 +191,11 @@ func fetchTSDB(url string) ([]byte, error) {
 	}
 
 	cacheMapMu.Lock()
-	cacheMap[url] = body
+	pruneCacheLocked()
+	cacheMap[url] = cacheEntry{
+		data:      body,
+		expiresAt: time.Now().Add(tsdbCacheTTL),
+	}
 	cacheMapMu.Unlock()
 
 	return body, nil
@@ -993,7 +1026,11 @@ func getFull20TeamsStandings(leagueID, leagueName string) []CalculatedStanding {
 }
 
 func fetchRapidAPILiveStandings(leagueID string) []CalculatedStanding {
-	apiKey := getEnv("RAPIDAPI_KEY", "5dd3096369mshccc009331577506p1f4d30jsnece016002164")
+	apiKey := getEnv("RAPIDAPI_KEY", "")
+	if apiKey == "" {
+		log.Println("⚠️ ข้ามการดึงตารางคะแนนสด: ไม่ได้ตั้งค่า RAPIDAPI_KEY")
+		return nil
+	}
 	host := "free-api-live-football-data.p.rapidapi.com"
 	url := fmt.Sprintf("https://free-api-live-football-data.p.rapidapi.com/football-get-standing-all?leagueid=%s", leagueID)
 
