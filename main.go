@@ -975,6 +975,9 @@ func fetchFromFotmob(targetURL string) ([]byte, error) {
 
 func fetchCompleteMatchDetails(matchID string) ([]byte, error) {
 	rapidKey := getRapidAPIKey()
+	if rapidKey == "" {
+		return fetchFromFotmob(fmt.Sprintf("https://www.fotmob.com/api/matchDetails?matchId=%s", matchID))
+	}
 	rapidHost := getEnv("RAPIDAPI_HOST", DefaultRapidAPIHost)
 
 	client := &http.Client{Timeout: 6 * time.Second}
@@ -1118,6 +1121,9 @@ func fetchCompleteMatchDetails(matchID string) ([]byte, error) {
 
 func fetchTeamSquad(teamID string) ([]byte, error) {
 	rapidKey := getRapidAPIKey()
+	if rapidKey == "" {
+		return fetchFromFotmob(fmt.Sprintf("https://www.fotmob.com/api/teams?id=%s&squad=true", teamID))
+	}
 	rapidHost := getEnv("RAPIDAPI_HOST", DefaultRapidAPIHost)
 
 	url := fmt.Sprintf("https://%s/api/fotmob/v1/team/details/squad?team_id=%s", rapidHost, teamID)
@@ -1155,6 +1161,9 @@ func fetchTeamSquad(teamID string) ([]byte, error) {
 
 func fetchTeamFixtures(teamID string) ([]byte, error) {
 	rapidKey := getRapidAPIKey()
+	if rapidKey == "" {
+		return fetchFromFotmob(fmt.Sprintf("https://www.fotmob.com/api/teams?id=%s&fixtures=true", teamID))
+	}
 	rapidHost := getEnv("RAPIDAPI_HOST", DefaultRapidAPIHost)
 
 	url := fmt.Sprintf("https://%s/api/fotmob/v1/team/details/fixtures?team_id=%s", rapidHost, teamID)
@@ -1193,6 +1202,9 @@ func fetchTeamFixtures(teamID string) ([]byte, error) {
 
 func fetchCompleteTeamDetails(teamID string) ([]byte, error) {
 	rapidKey := getRapidAPIKey()
+	if rapidKey == "" {
+		return fetchFromFotmob(fmt.Sprintf("https://www.fotmob.com/api/teams?id=%s", teamID))
+	}
 	rapidHost := getEnv("RAPIDAPI_HOST", DefaultRapidAPIHost)
 
 	client := &http.Client{Timeout: 6 * time.Second}
@@ -1321,6 +1333,9 @@ func fetchCompleteTeamDetails(teamID string) ([]byte, error) {
 
 func fetchCompleteLeagueDetails(leagueID string) ([]byte, error) {
 	rapidKey := getRapidAPIKey()
+	if rapidKey == "" {
+		return fetchFromFotmob(fmt.Sprintf("https://www.fotmob.com/api/leagues?id=%s", leagueID))
+	}
 	rapidHost := getEnv("RAPIDAPI_HOST", DefaultRapidAPIHost)
 
 	client := &http.Client{Timeout: 6 * time.Second}
