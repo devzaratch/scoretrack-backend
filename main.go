@@ -87,6 +87,9 @@ func getRapidAPIKey() string {
 	if key == "" {
 		key = getEnv("RAPIDAPI_KEY", "")
 	}
+	if key == "" {
+		log.Println("⚠️ RAPIDAPI_KEY is not set in environment or .env.local")
+	}
 	return key
 }
 
@@ -878,32 +881,8 @@ func handleProxy(cacheKeyPattern string, ttl time.Duration, targetURLBuilder fun
 func fetchFromFotmob(targetURL string) ([]byte, error) {
 	rapidKey := getRapidAPIKey()
 	rapidHost := getEnv("RAPIDAPI_HOST", DefaultRapidAPIHost)
-	client := &http.Client{Timeout: 6 * time.Second}
 
-	// 1. If no RAPIDAPI_KEY is set, fetch directly from FotMob Web API
-	if rapidKey == "" {
-		reqDirect, errDirect := http.NewRequest("GET", targetURL, nil)
-		if errDirect != nil {
-			return nil, errDirect
-		}
-		reqDirect.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
-		reqDirect.Header.Set("Accept", "application/json, text/plain, */*")
-		reqDirect.Header.Set("Accept-Language", "th-TH,th;q=0.9,en-US;q=0.8,en;q=0.7")
-		reqDirect.Header.Set("Referer", "https://www.fotmob.com/")
-
-		respDirect, errResp := client.Do(reqDirect)
-		if errResp == nil && respDirect.StatusCode == http.StatusOK {
-			defer respDirect.Body.Close()
-			return io.ReadAll(respDirect.Body)
-		}
-		if respDirect != nil {
-			respDirect.Body.Close()
-			return nil, fmt.Errorf("direct fotmob returned status: %d", respDirect.StatusCode)
-		}
-		return nil, errResp
-	}
-
-	// 2. Construct RapidAPI URL v1 mapping when rapidKey is set
+	// 1. Construct RapidAPI URL v1 mapping
 	urlToFetch := targetURL
 	if strings.Contains(targetURL, "www.fotmob.com/api") {
 		transformed := targetURL
@@ -935,14 +914,17 @@ func fetchFromFotmob(targetURL string) ([]byte, error) {
 		return nil, err
 	}
 
-	req.Header.Set("x-rapidapi-key", rapidKey)
-	req.Header.Set("x-rapidapi-host", rapidHost)
-	req.Header.Set("Content-Type", "application/json")
+	if rapidKey != "" {
+		req.Header.Set("x-rapidapi-key", rapidKey)
+		req.Header.Set("x-rapidapi-host", rapidHost)
+		req.Header.Set("Content-Type", "application/json")
+	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
 
+	client := &http.Client{Timeout: 6 * time.Second}
 	resp, err := client.Do(req)
 
-	// 3. Fallback to Direct URL if RapidAPI fails or returns non-200
+	// 2. Fallback to Direct URL if RapidAPI fails or returns non-200
 	if err != nil || resp.StatusCode != http.StatusOK {
 		if resp != nil {
 			resp.Body.Close()
@@ -975,9 +957,6 @@ func fetchFromFotmob(targetURL string) ([]byte, error) {
 
 func fetchCompleteMatchDetails(matchID string) ([]byte, error) {
 	rapidKey := getRapidAPIKey()
-	if rapidKey == "" {
-		return fetchFromFotmob(fmt.Sprintf("https://www.fotmob.com/api/matchDetails?matchId=%s", matchID))
-	}
 	rapidHost := getEnv("RAPIDAPI_HOST", DefaultRapidAPIHost)
 
 	client := &http.Client{Timeout: 6 * time.Second}
@@ -1121,9 +1100,6 @@ func fetchCompleteMatchDetails(matchID string) ([]byte, error) {
 
 func fetchTeamSquad(teamID string) ([]byte, error) {
 	rapidKey := getRapidAPIKey()
-	if rapidKey == "" {
-		return fetchFromFotmob(fmt.Sprintf("https://www.fotmob.com/api/teams?id=%s&squad=true", teamID))
-	}
 	rapidHost := getEnv("RAPIDAPI_HOST", DefaultRapidAPIHost)
 
 	url := fmt.Sprintf("https://%s/api/fotmob/v1/team/details/squad?team_id=%s", rapidHost, teamID)
@@ -1161,9 +1137,6 @@ func fetchTeamSquad(teamID string) ([]byte, error) {
 
 func fetchTeamFixtures(teamID string) ([]byte, error) {
 	rapidKey := getRapidAPIKey()
-	if rapidKey == "" {
-		return fetchFromFotmob(fmt.Sprintf("https://www.fotmob.com/api/teams?id=%s&fixtures=true", teamID))
-	}
 	rapidHost := getEnv("RAPIDAPI_HOST", DefaultRapidAPIHost)
 
 	url := fmt.Sprintf("https://%s/api/fotmob/v1/team/details/fixtures?team_id=%s", rapidHost, teamID)
@@ -1202,9 +1175,6 @@ func fetchTeamFixtures(teamID string) ([]byte, error) {
 
 func fetchCompleteTeamDetails(teamID string) ([]byte, error) {
 	rapidKey := getRapidAPIKey()
-	if rapidKey == "" {
-		return fetchFromFotmob(fmt.Sprintf("https://www.fotmob.com/api/teams?id=%s", teamID))
-	}
 	rapidHost := getEnv("RAPIDAPI_HOST", DefaultRapidAPIHost)
 
 	client := &http.Client{Timeout: 6 * time.Second}
@@ -1333,9 +1303,6 @@ func fetchCompleteTeamDetails(teamID string) ([]byte, error) {
 
 func fetchCompleteLeagueDetails(leagueID string) ([]byte, error) {
 	rapidKey := getRapidAPIKey()
-	if rapidKey == "" {
-		return fetchFromFotmob(fmt.Sprintf("https://www.fotmob.com/api/leagues?id=%s", leagueID))
-	}
 	rapidHost := getEnv("RAPIDAPI_HOST", DefaultRapidAPIHost)
 
 	client := &http.Client{Timeout: 6 * time.Second}
