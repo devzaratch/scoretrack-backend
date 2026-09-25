@@ -1025,11 +1025,95 @@ func getFull20TeamsStandings(leagueID, leagueName string) []CalculatedStanding {
 	return result
 }
 
+func fetchDirectFotmobStandings(leagueID string) []CalculatedStanding {
+	url := fmt.Sprintf("https://www.fotmob.com/api/leagues?id=%s", leagueID)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+	req.Header.Set("Accept", "application/json, text/plain, */*")
+	req.Header.Set("Referer", "https://www.fotmob.com/")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	res, err := client.Do(req)
+	if err != nil || res.StatusCode != 200 {
+		return nil
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(res.Body)
+
+	var raw struct {
+		Table []struct {
+			Data struct {
+				Table struct {
+					All []struct {
+						ID            int    `json:"id"`
+						Name          string `json:"name"`
+						Idx           int    `json:"idx"`
+						Played        int    `json:"played"`
+						Wins          int    `json:"wins"`
+						Draws         int    `json:"draws"`
+						Losses        int    `json:"losses"`
+						ScoresFor     int    `json:"scoresFor"`
+						ScoresAgainst int    `json:"scoresAgainst"`
+						Pts           int    `json:"pts"`
+					} `json:"all"`
+				} `json:"table"`
+				Tables []struct {
+					Table struct {
+						All []struct {
+							ID            int    `json:"id"`
+							Name          string `json:"name"`
+							Idx           int    `json:"idx"`
+							Played        int    `json:"played"`
+							Wins          int    `json:"wins"`
+							Draws         int    `json:"draws"`
+							Losses        int    `json:"losses"`
+							ScoresFor     int    `json:"scoresFor"`
+							ScoresAgainst int    `json:"scoresAgainst"`
+							Pts           int    `json:"pts"`
+						} `json:"all"`
+					} `json:"table"`
+				} `json:"tables"`
+			} `json:"data"`
+		} `json:"table"`
+	}
+
+	if err := json.Unmarshal(body, &raw); err == nil && len(raw.Table) > 0 {
+		var list []CalculatedStanding
+		tableItems := raw.Table[0].Data.Table.All
+		if len(tableItems) == 0 && len(raw.Table[0].Data.Tables) > 0 {
+			tableItems = raw.Table[0].Data.Tables[0].Table.All
+		}
+		for _, s := range tableItems {
+			list = append(list, CalculatedStanding{
+				Rank:      s.Idx,
+				TeamID:    s.ID,
+				Name:      s.Name,
+				Played:    s.Played,
+				Wins:      s.Wins,
+				Draws:     s.Draws,
+				Losses:    s.Losses,
+				GF:        s.ScoresFor,
+				GA:        s.ScoresAgainst,
+				GD:        s.ScoresFor - s.ScoresAgainst,
+				ScoresStr: fmt.Sprintf("%d:%d", s.ScoresFor, s.ScoresAgainst),
+				Pts:       s.Pts,
+				Logo:      fmt.Sprintf("https://images.fotmob.com/image_resources/logo/teamlogo/%d.png", s.ID),
+			})
+		}
+		if len(list) > 0 {
+			return list
+		}
+	}
+	return nil
+}
+
 func fetchRapidAPILiveStandings(leagueID string) []CalculatedStanding {
 	apiKey := getEnv("RAPIDAPI_KEY", "")
 	if apiKey == "" {
-		log.Println("⚠️ ข้ามการดึงตารางคะแนนสด: ไม่ได้ตั้งค่า RAPIDAPI_KEY")
-		return nil
+		return fetchDirectFotmobStandings(leagueID)
 	}
 	host := "free-api-live-football-data.p.rapidapi.com"
 	url := fmt.Sprintf("https://free-api-live-football-data.p.rapidapi.com/football-get-standing-all?leagueid=%s", leagueID)
@@ -1257,8 +1341,15 @@ type RapidAPIStatusReason struct {
 
 func TransformRapidAPIMatchesToRealMatches(body []byte) ([]RealMatch, error) {
 	var groups []RapidAPIGroup
-	if err := json.Unmarshal(body, &groups); err != nil {
-		return nil, err
+	if err := json.Unmarshal(body, &groups); err != nil || len(groups) == 0 {
+		var wrapper struct {
+			Leagues []RapidAPIGroup `json:"leagues"`
+		}
+		if errWrapper := json.Unmarshal(body, &wrapper); errWrapper == nil && len(wrapper.Leagues) > 0 {
+			groups = wrapper.Leagues
+		} else if err != nil {
+			return nil, err
+		}
 	}
 
 	var results []RealMatch
