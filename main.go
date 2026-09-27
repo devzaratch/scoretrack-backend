@@ -184,13 +184,13 @@ func main() {
 	r.GET("/ws/live", handleWebSocket)
 	r.GET("/ws/chat/:id", handleChatWebSocket)
 
-	// Handlers
-	matchesHandler := handleProxy("matches:%s", 30*time.Second, func(c *gin.Context) string {
+	// Handlers with optimized cache TTLs to conserve API Quota
+	matchesHandler := handleProxy("matches:%s", 60*time.Second, func(c *gin.Context) string {
 		date := c.DefaultQuery("date", time.Now().Format("20060102"))
 		return fmt.Sprintf("https://www.fotmob.com/api/matches?date=%s", date)
 	})
 
-	matchDetailsHandler := handleProxy("match:%s", 15*time.Second, func(c *gin.Context) string {
+	matchDetailsHandler := handleProxy("match:%s", 2*time.Minute, func(c *gin.Context) string {
 		matchID := c.Param("id")
 		if matchID == "" {
 			matchID = c.Query("matchId")
@@ -201,7 +201,7 @@ func main() {
 		return fmt.Sprintf("https://www.fotmob.com/api/matchDetails?matchId=%s", matchID)
 	})
 
-	leagueHandler := handleProxy("league:%s", 10*time.Minute, func(c *gin.Context) string {
+	leagueHandler := handleProxy("league:%s", 30*time.Minute, func(c *gin.Context) string {
 		leagueID := c.Param("id")
 		if leagueID == "" {
 			leagueID = c.Query("id")
@@ -213,7 +213,7 @@ func main() {
 		return fmt.Sprintf("https://www.fotmob.com/api/leagues?id=%s", leagueID)
 	})
 
-	teamHandler := handleProxy("team:%s", 15*time.Minute, func(c *gin.Context) string {
+	teamHandler := handleProxy("team:%s", 30*time.Minute, func(c *gin.Context) string {
 		teamID := c.Param("id")
 		if teamID == "" {
 			teamID = c.Query("id")
@@ -221,7 +221,7 @@ func main() {
 		return fmt.Sprintf("https://www.fotmob.com/api/teams?id=%s", teamID)
 	})
 
-	teamSquadHandler := handleProxy("team:squad:%s", 30*time.Minute, func(c *gin.Context) string {
+	teamSquadHandler := handleProxy("team:squad:%s", 2*time.Hour, func(c *gin.Context) string {
 		teamID := c.Param("id")
 		if teamID == "" {
 			teamID = c.Query("id")
@@ -229,7 +229,7 @@ func main() {
 		return fmt.Sprintf("https://www.fotmob.com/api/teams?id=%s&squad=true", teamID)
 	})
 
-	teamFixturesHandler := handleProxy("team:fixtures:%s", 15*time.Minute, func(c *gin.Context) string {
+	teamFixturesHandler := handleProxy("team:fixtures:%s", 1*time.Hour, func(c *gin.Context) string {
 		teamID := c.Param("id")
 		if teamID == "" {
 			teamID = c.Query("id")
@@ -237,7 +237,7 @@ func main() {
 		return fmt.Sprintf("https://www.fotmob.com/api/teams?id=%s&fixtures=true", teamID)
 	})
 
-	playerHandler := handleProxy("player:%s", 30*time.Minute, func(c *gin.Context) string {
+	playerHandler := handleProxy("player:%s", 2*time.Hour, func(c *gin.Context) string {
 		playerID := c.Param("id")
 		if playerID == "" {
 			playerID = c.Query("id")
@@ -245,7 +245,7 @@ func main() {
 		return fmt.Sprintf("https://www.fotmob.com/api/playerData?id=%s", playerID)
 	})
 
-	searchHandler := handleProxy("search:%s", 15*time.Minute, func(c *gin.Context) string {
+	searchHandler := handleProxy("search:%s", 1*time.Hour, func(c *gin.Context) string {
 		term := c.Query("q")
 		if term == "" {
 			term = c.Query("term")
@@ -364,12 +364,23 @@ func startLiveTicker() {
 			continue
 		}
 
-		// 1. Polling Real Live Matches Data from FotMob with Smart 35s In-Memory Debouncing
+		// 1. Polling Real Live Matches Data from FotMob with Adaptive Debouncing (35s during live games, 3m during off-peak)
 		todayStr := time.Now().Format("20060102")
 		targetURL := fmt.Sprintf("https://www.fotmob.com/api/matches?date=%s", todayStr)
 
 		liveTickerCacheMu.Lock()
-		useCached := time.Since(liveTickerLastFetch) < 35*time.Second && len(liveTickerCacheData) > 0
+		debounceWindow := 3 * time.Minute
+		if len(liveTickerCacheData) > 0 {
+			cacheStr := string(liveTickerCacheData)
+			// Check if any match is currently live (in progress)
+			if strings.Contains(cacheStr, `"started":true`) && !strings.Contains(cacheStr, `"finished":true`) ||
+				strings.Contains(cacheStr, `liveTime`) || strings.Contains(cacheStr, `"short":"HT"`) ||
+				strings.Contains(cacheStr, `"short":"1H"`) || strings.Contains(cacheStr, `"short":"2H"`) {
+				debounceWindow = 35 * time.Second
+			}
+		}
+
+		useCached := time.Since(liveTickerLastFetch) < debounceWindow && len(liveTickerCacheData) > 0
 		var data []byte
 		var err error
 
@@ -879,10 +890,40 @@ func handleProxy(cacheKeyPattern string, ttl time.Duration, targetURLBuilder fun
 }
 
 func fetchFromFotmob(targetURL string) ([]byte, error) {
+	client := &http.Client{Timeout: 6 * time.Second}
+
+	// 1. Try Direct FotMob URL first (Free, 0 RapidAPI quota used)
+	directURL := targetURL
+	if !strings.HasPrefix(directURL, "http") {
+		directURL = "https://www.fotmob.com/api" + directURL
+	}
+
+	reqDirect, errDirect := http.NewRequest("GET", directURL, nil)
+	if errDirect == nil {
+		reqDirect.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+		reqDirect.Header.Set("Accept", "application/json, text/plain, */*")
+		reqDirect.Header.Set("Accept-Language", "th-TH,th;q=0.9,en-US;q=0.8,en;q=0.7")
+		reqDirect.Header.Set("Referer", "https://www.fotmob.com/")
+
+		respDirect, errResp := client.Do(reqDirect)
+		if errResp == nil && respDirect.StatusCode == http.StatusOK {
+			defer respDirect.Body.Close()
+			bodyDirect, errRead := io.ReadAll(respDirect.Body)
+			if errRead == nil && len(bodyDirect) > 0 {
+				return bodyDirect, nil
+			}
+		} else if respDirect != nil {
+			respDirect.Body.Close()
+		}
+	}
+
+	// 2. Fallback to RapidAPI if Direct FotMob fails or is rate-limited
 	rapidKey := getRapidAPIKey()
 	rapidHost := getEnv("RAPIDAPI_HOST", DefaultRapidAPIHost)
+	if rapidKey == "" {
+		return nil, fmt.Errorf("direct fotmob failed and no rapidapi key configured")
+	}
 
-	// 1. Construct RapidAPI URL v1 mapping
 	urlToFetch := targetURL
 	if strings.Contains(targetURL, "www.fotmob.com/api") {
 		transformed := targetURL
@@ -914,36 +955,15 @@ func fetchFromFotmob(targetURL string) ([]byte, error) {
 		return nil, err
 	}
 
-	if rapidKey != "" {
-		req.Header.Set("x-rapidapi-key", rapidKey)
-		req.Header.Set("x-rapidapi-host", rapidHost)
-		req.Header.Set("Content-Type", "application/json")
-	}
+	req.Header.Set("x-rapidapi-key", rapidKey)
+	req.Header.Set("x-rapidapi-host", rapidHost)
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
 
-	client := &http.Client{Timeout: 6 * time.Second}
 	resp, err := client.Do(req)
-
-	// 2. Fallback to Direct URL if RapidAPI fails or returns non-200
 	if err != nil || resp.StatusCode != http.StatusOK {
 		if resp != nil {
 			resp.Body.Close()
-		}
-
-		reqDirect, errDirect := http.NewRequest("GET", targetURL, nil)
-		if errDirect == nil {
-			reqDirect.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
-			reqDirect.Header.Set("Accept", "application/json, text/plain, */*")
-			reqDirect.Header.Set("Accept-Language", "th-TH,th;q=0.9,en-US;q=0.8,en;q=0.7")
-			reqDirect.Header.Set("Referer", "https://www.fotmob.com/")
-
-			respDirect, errResp := client.Do(reqDirect)
-			if errResp == nil && respDirect.StatusCode == http.StatusOK {
-				defer respDirect.Body.Close()
-				return io.ReadAll(respDirect.Body)
-			} else if respDirect != nil {
-				respDirect.Body.Close()
-			}
 		}
 		if err != nil {
 			return nil, err
@@ -956,6 +976,18 @@ func fetchFromFotmob(targetURL string) ([]byte, error) {
 }
 
 func fetchCompleteMatchDetails(matchID string) ([]byte, error) {
+	// 1. Try Direct Single Request first (0 RapidAPI quota used)
+	directURL := fmt.Sprintf("https://www.fotmob.com/api/matchDetails?matchId=%s", matchID)
+	if data, err := fetchFromFotmob(directURL); err == nil && len(data) > 0 {
+		var testMap map[string]interface{}
+		if errJson := json.Unmarshal(data, &testMap); errJson == nil {
+			if _, hasHeader := testMap["header"]; hasHeader || testMap["general"] != nil || testMap["content"] != nil {
+				return data, nil
+			}
+		}
+	}
+
+	// 2. Fallback to RapidAPI sub-requests if direct call fails
 	rapidKey := getRapidAPIKey()
 	rapidHost := getEnv("RAPIDAPI_HOST", DefaultRapidAPIHost)
 
@@ -1174,6 +1206,18 @@ func fetchTeamFixtures(teamID string) ([]byte, error) {
 }
 
 func fetchCompleteTeamDetails(teamID string) ([]byte, error) {
+	// 1. Try Direct Single Request first (0 RapidAPI quota used)
+	directURL := fmt.Sprintf("https://www.fotmob.com/api/teams?id=%s", teamID)
+	if data, err := fetchFromFotmob(directURL); err == nil && len(data) > 0 {
+		var testMap map[string]interface{}
+		if errJson := json.Unmarshal(data, &testMap); errJson == nil {
+			if _, hasDetails := testMap["details"]; hasDetails || testMap["overview"] != nil || testMap["name"] != nil {
+				return data, nil
+			}
+		}
+	}
+
+	// 2. Fallback to RapidAPI sub-requests if direct call fails
 	rapidKey := getRapidAPIKey()
 	rapidHost := getEnv("RAPIDAPI_HOST", DefaultRapidAPIHost)
 
@@ -1302,6 +1346,18 @@ func fetchCompleteTeamDetails(teamID string) ([]byte, error) {
 }
 
 func fetchCompleteLeagueDetails(leagueID string) ([]byte, error) {
+	// 1. Try Direct Single Request first (0 RapidAPI quota used)
+	directURL := fmt.Sprintf("https://www.fotmob.com/api/leagues?id=%s", leagueID)
+	if data, err := fetchFromFotmob(directURL); err == nil && len(data) > 0 {
+		var testMap map[string]interface{}
+		if errJson := json.Unmarshal(data, &testMap); errJson == nil {
+			if _, hasTable := testMap["table"]; hasTable || testMap["details"] != nil {
+				return data, nil
+			}
+		}
+	}
+
+	// 2. Fallback to RapidAPI sub-requests if direct call fails
 	rapidKey := getRapidAPIKey()
 	rapidHost := getEnv("RAPIDAPI_HOST", DefaultRapidAPIHost)
 
