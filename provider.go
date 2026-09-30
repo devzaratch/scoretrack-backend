@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -511,7 +512,8 @@ func initProviders() {
 	registry.Load()
 
 	providerChain = []DataProvider{
-		NewGoalProvider(),
+		NewGoalProvider(),    // หลัก: ฟรี 1,000 req/วัน + WebSocket push
+		NewAPIFootProvider(), // สำรอง: ฟรี 100 req/วัน (ใช้เมื่อตัวหลักไม่พอ/ล่ม)
 	}
 
 	for _, p := range providerChain {
@@ -544,6 +546,69 @@ func initProviders() {
 	if g := goalProvider(); g != nil {
 		g.StartLiveStream()
 	}
+}
+
+// liveSource คือ provider ที่เก็บสถานะ live ไว้ในหน่วยความจำ
+// (ใช้โดย live ticker ฝั่ง main.go — GOAL มี WS push, API-Football มีแค่ REST sweep)
+type liveSource interface {
+	Name() string
+	// SweepInterval ระยะห่างของการ sweep แต่ละตัว (ต่างกันตามมี WebSocket หรือไม่)
+	SweepInterval() time.Duration
+	LiveSweep() error
+	LiveUpdatesSnapshot() []map[string]interface{}
+	HasUnknownLiveMatches() bool
+	InvalidateTodayCache()
+}
+
+// activeLiveSource คืน provider ที่ใช้ป้อน live ticker ตัวแรกที่ยังใช้ได้
+// (เรียงตามลำดับใน providerChain = GOAL ก่อน ตัวสำรองทีหลัง)
+func activeLiveSource() liveSource {
+	for _, p := range providerChain {
+		if !p.Enabled() {
+			continue
+		}
+		if ok, _ := p.Budget().Allow(); !ok {
+			continue
+		}
+		if ls, ok := p.(liveSource); ok {
+			return ls
+		}
+	}
+	return nil
+}
+
+// mergeLiveOverlay ทับรายการแข่งของวันด้วยสถานะ live ล่าสุด
+// (ใช้ร่วมกันทุก provider — GOAL มี WS, API-Football มี REST sweep)
+func mergeLiveOverlay(base []RealMatch, state map[int]RealMatch) []RealMatch {
+	inBase := make(map[int]bool, len(base))
+	out := make([]RealMatch, 0, len(base)+len(state))
+	for _, m := range base {
+		inBase[m.MatchID] = true
+		if s, ok := state[m.MatchID]; ok {
+			switch {
+			case isLiveStatus(s.Status):
+				m.Status = s.Status
+				m.HomeTeam.Score = s.HomeTeam.Score
+				m.AwayTeam.Score = s.AwayTeam.Score
+			case s.Status == "FT" && isLiveStatus(m.Status):
+				// รายการวันนี้ยังบอกว่าแข่งอยู่ แต่ state บอกว่าจบแล้ว -> ใช้ของใหม่
+				m.Status = "FT"
+				m.HomeTeam.Score = s.HomeTeam.Score
+				m.AwayTeam.Score = s.AwayTeam.Score
+			}
+		}
+		out = append(out, m)
+	}
+
+	// คู่ที่เพิ่งเริ่มแข่ง (ยังไม่อยู่ในรายการวันนี้) -> ใส่เข้ารายการให้เห็นทันที
+	added := make([]RealMatch, 0, len(state))
+	for id, s := range state {
+		if !inBase[id] && isLiveStatus(s.Status) {
+			added = append(added, s)
+		}
+	}
+	sort.Slice(added, func(i, j int) bool { return added[i].MatchID < added[j].MatchID })
+	return append(out, added...)
 }
 
 // fetchMatchesFromProviders ดึงรายการแข่งของวันไทยจาก provider ที่ว่างที่สุด

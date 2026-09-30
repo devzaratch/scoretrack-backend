@@ -71,6 +71,7 @@ func (p *GoalProvider) StartLiveStream() {
 
 func (p *GoalProvider) wsLoop() {
 	backoff := 3 * time.Second
+	lastBudgetLog := time.Time{}
 	for p.Enabled() {
 		start := time.Now()
 		err := p.wsSession()
@@ -79,6 +80,17 @@ func (p *GoalProvider) wsLoop() {
 		if err == errWSReconnect {
 			backoff = 3 * time.Second
 			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+		// โควตาไม่พอ -> ห้ามวน retry ถี่ ๆ (ไม่ได้ยิงจริงอยู่แล้ว แต่ทำให้ log รก)
+		// WS token ฟรี แต่ยังนับใน budget ของเราเพื่อกันชน circuit breaker
+		if err != nil && strings.Contains(err.Error(), "budget") {
+			if time.Since(lastBudgetLog) > 5*time.Minute {
+				log.Printf("ℹ️ goal WS: ยังไม่ต่อเพราะโควตาไม่พอ -> รอ 5 นาที (%v)", err)
+				lastBudgetLog = time.Now()
+			}
+			time.Sleep(5 * time.Minute)
+			backoff = 3 * time.Second
 			continue
 		}
 		if err != nil {

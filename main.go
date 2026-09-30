@@ -355,29 +355,30 @@ func startLiveTicker() {
 			continue
 		}
 
-		g := goalProvider()
-		if g == nil {
+		// เลือกแหล่ง live ตัวแรกที่ยังใช้ได้ (GOAL ก่อน ตัวสำรอง API-Football ทีหลัง)
+		src := activeLiveSource()
+		if src == nil {
 			continue
 		}
 
-		// 1. REST sweep ทุก ~3 นาที (1 call เท่านั้น ได้ทุกคู่) เพื่อครอบคลุมทุกลีก
-		//    ส่วนคะแนนล่าสุด realtime มาจาก WebSocket push อยู่แล้ว (0 โควตา)
-		sweepEvery := time.Duration(envInt("GOAL_LIVE_SWEEP_SEC", 180)) * time.Second
-		if time.Since(lastREST) >= sweepEvery {
-			if _, err := g.LiveFixtures(); err == nil {
+		// 1. REST sweep ตามรอบของ provider แต่ละตัว
+		//    (GOAL = 180 วิ เพราะมี WebSocket push ช่วย realtime / API-Football = 60 วิ
+		//     เพราะไม่มี push ต้องพึ่ง sweep อย่างเดียว — ทุกการ sweep = 1 call เท่านั้น)
+		if time.Since(lastREST) >= src.SweepInterval() {
+			if err := src.LiveSweep(); err == nil {
 				lastREST = time.Now()
 			}
 
 			// ถ้ามีคู่แข่งใหม่ที่ยังไม่อยู่ในรายการวันนี้ -> สั่งโหลดรายการใหม่ (จำกัด 1 ครั้ง/2 นาที)
-			if time.Since(lastInvalidate) > 2*time.Minute && g.HasUnknownLiveMatches() {
-				g.InvalidateTodayCache()
+			if time.Since(lastInvalidate) > 2*time.Minute && src.HasUnknownLiveMatches() {
+				src.InvalidateTodayCache()
 				lastInvalidate = time.Now()
 				log.Printf("🔄 live ticker: พบคู่แข่งใหม่ -> โหลดรายการวันนี้ใหม่")
 			}
 		}
 
 		// 2. อ่านสถานะรวมจาก memory (ไม่ยิง upstream / ไม่มี mock fallback แล้ว)
-		liveUpdates := g.LiveUpdatesSnapshot()
+		liveUpdates := src.LiveUpdatesSnapshot()
 		if len(liveUpdates) == 0 {
 			continue
 		}

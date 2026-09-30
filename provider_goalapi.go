@@ -529,36 +529,7 @@ func (p *GoalProvider) applyLiveOverlay(base []RealMatch) []RealMatch {
 		state[k] = v
 	}
 	p.mu.Unlock()
-
-	inBase := make(map[int]bool, len(base))
-	out := make([]RealMatch, 0, len(base)+len(state))
-	for _, m := range base {
-		inBase[m.MatchID] = true
-		if s, ok := state[m.MatchID]; ok {
-			switch {
-			case isLiveStatus(s.Status):
-				m.Status = s.Status
-				m.HomeTeam.Score = s.HomeTeam.Score
-				m.AwayTeam.Score = s.AwayTeam.Score
-			case s.Status == "FT" && isLiveStatus(m.Status):
-				// รายการวันนี้ยังบอกว่าแข่งอยู่ แต่ state บอกว่าจบแล้ว -> ใช้ของใหม่
-				m.Status = "FT"
-				m.HomeTeam.Score = s.HomeTeam.Score
-				m.AwayTeam.Score = s.AwayTeam.Score
-			}
-		}
-		out = append(out, m)
-	}
-
-	// คู่ที่เพิ่งเริ่มแข่ง (ยังไม่อยู่ในรายการวันนี้) -> ใส่เข้ารายการให้เห็นทันที
-	added := make([]RealMatch, 0, len(state))
-	for id, s := range state {
-		if !inBase[id] && isLiveStatus(s.Status) {
-			added = append(added, s)
-		}
-	}
-	sort.Slice(added, func(i, j int) bool { return added[i].MatchID < added[j].MatchID })
-	return append(out, added...)
+	return mergeLiveOverlay(base, state)
 }
 
 // liveFreshLocked: มี WS ที่เพิ่งอัปเดต หรือ REST sweep ที่ยังไม่เกิน 10 นาที
@@ -590,6 +561,16 @@ func (p *GoalProvider) pruneDoneLocked(now time.Time) {
 }
 
 // LiveStateSnapshot คืนสถานะรวมปัจจุบันโดยไม่ยิง upstream
+// SweepInterval + LiveSweep ใช้โดย live ticker (GOAL มี WS push จึงไม่ต้องถี่)
+func (p *GoalProvider) SweepInterval() time.Duration {
+	return time.Duration(envInt("GOAL_LIVE_SWEEP_SEC", 180)) * time.Second
+}
+
+func (p *GoalProvider) LiveSweep() error {
+	_, err := p.LiveFixtures()
+	return err
+}
+
 func (p *GoalProvider) LiveStateSnapshot() []RealMatch {
 	p.mu.Lock()
 	defer p.mu.Unlock()
