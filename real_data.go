@@ -14,13 +14,16 @@ import (
 
 // MatchStruct represents match format expected by LiveScoreClient
 type RealMatch struct {
-	MatchID   int      `json:"match_id"`
-	LeagueID  int      `json:"league_id"`
-	League    string   `json:"league"`
-	Status    string   `json:"status"`
-	MatchTime string   `json:"match_time"`
-	HomeTeam  RealTeam `json:"home_team"`
-	AwayTeam  RealTeam `json:"away_team"`
+	MatchID    int      `json:"match_id"`
+	LeagueID   int      `json:"league_id"`
+	League     string   `json:"league"`
+	Country    string   `json:"country,omitempty"`
+	Status     string   `json:"status"`
+	MatchTime  string   `json:"match_time"`
+	Time       string   `json:"time,omitempty"`
+	LeagueLogo string   `json:"league_logo,omitempty"`
+	HomeTeam   RealTeam `json:"home_team"`
+	AwayTeam   RealTeam `json:"away_team"`
 }
 
 type RealTeam struct {

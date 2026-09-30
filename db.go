@@ -9,18 +9,10 @@ import (
 	"time"
 )
 
-type StreamServerOption struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	URL     string `json:"url"`
-	Quality string `json:"quality"`
-}
-
 type StoreData struct {
 	ChatMessages       map[string][]map[string]interface{} `json:"chat_messages"`
 	UserFavorites      map[string][]int                    `json:"user_favorites"`
 	MatchSubscriptions map[int][]string                    `json:"match_subscriptions"`
-	MatchStreams       map[string][]StreamServerOption     `json:"match_streams"`
 	FCMTokens          map[string]int64                    `json:"fcm_tokens"` // token -> unix timestamp ที่ลงทะเบียนล่าสุด
 }
 
@@ -46,7 +38,6 @@ func InitDB() *PersistentDB {
 			ChatMessages:       make(map[string][]map[string]interface{}),
 			UserFavorites:      make(map[string][]int),
 			MatchSubscriptions: make(map[int][]string),
-			MatchStreams:       make(map[string][]StreamServerOption),
 			FCMTokens:          make(map[string]int64),
 		},
 	}
@@ -63,9 +54,6 @@ func InitDB() *PersistentDB {
 			}
 			if loaded.MatchSubscriptions != nil {
 				db.data.MatchSubscriptions = loaded.MatchSubscriptions
-			}
-			if loaded.MatchStreams != nil {
-				db.data.MatchStreams = loaded.MatchStreams
 			}
 			if loaded.FCMTokens != nil {
 				db.data.FCMTokens = loaded.FCMTokens
@@ -220,34 +208,6 @@ func (db *PersistentDB) GetMatchSubscribers(matchID int) []string {
 	res := make([]string, len(tokens))
 	copy(res, tokens)
 	return res
-}
-
-// --------------------------------------------------
-// Match Live Streams Persistence
-// --------------------------------------------------
-
-func (db *PersistentDB) GetMatchStreams(matchID string) []StreamServerOption {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
-
-	streams, ok := db.data.MatchStreams[matchID]
-	if !ok || len(streams) == 0 {
-		return nil
-	}
-	res := make([]StreamServerOption, len(streams))
-	copy(res, streams)
-	return res
-}
-
-func (db *PersistentDB) SaveMatchStreams(matchID string, streams []StreamServerOption) {
-	db.mu.Lock()
-	defer db.mu.Unlock()
-
-	if db.data.MatchStreams == nil {
-		db.data.MatchStreams = make(map[string][]StreamServerOption)
-	}
-	db.data.MatchStreams[matchID] = streams
-	db.dirty = true
 }
 
 // ---------------------------------------------------------

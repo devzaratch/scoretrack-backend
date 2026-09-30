@@ -30,9 +30,8 @@ var (
 		CheckOrigin: func(r *http.Request) bool { return true },
 	}
 
-	// WebSocket Clients Manager
-	wsClients   = make(map[*websocket.Conn]bool)
-	wsClientsMu sync.Mutex
+	// WebSocket Clients ถูกนับผ่าน GlobalLiveHub.ClientCount() แล้ว
+	// (ตัวแปร wsClients เดิมถูกลบ เพราะไม่เคยถูกเติมค่า -> ticker ไม่เคยทำงาน)
 
 	// In-Memory Favorites & FCM tokens
 	userFavorites   = make(map[string][]int)
@@ -97,6 +96,10 @@ func getRapidAPIKey() string {
 func main() {
 	loadEnvFile(".env.local")
 	loadEnvFile("../.env.local")
+
+	// 0. เตรียม Data Provider layer (GOAL API เป็นหลัก + คุมโควตา + ID registry)
+	initProviders()
+
 	// 1. ตรวจสอบบริการ Redis ก่อนอย่างเงียบๆ (ใช้ 127.0.0.1 บน Windows)
 	redisAddr := getEnv("REDIS_ADDR", "127.0.0.1:6379")
 	conn, err := net.DialTimeout("tcp", redisAddr, 500*time.Millisecond)
@@ -133,6 +136,7 @@ func main() {
 			"message": "🚀 Score-track Go Backend is running!",
 			"endpoints": gin.H{
 				"matches":   "/api/matches",
+			"sources":   "/api/_sources",
 				"match":     "/api/match/:id",
 				"league":    "/api/league/:id",
 				"team":      "/api/team/:id",
@@ -255,6 +259,9 @@ func main() {
 
 	// Register Routes under /api and /api/api (Safety Alias)
 	setupRoutes := func(rg *gin.RouterGroup) {
+		// Sources & Quota status (Phase 1: Data Layer)
+		rg.GET("/_sources", handleSourcesStatus)
+
 		// Search
 		rg.GET("/search", searchHandler)
 		rg.GET("/search/suggest", searchHandler)
@@ -268,8 +275,6 @@ func main() {
 
 		// Match Details
 		rg.GET("/match/:id", matchDetailsHandler)
-		rg.GET("/match/:id/stream", handleGetMatchStream)
-		// ❗ POST /match/:id/stream ย้ายไป adminGroup ด้านล่าง (ต้องมี ADMIN_TOKEN)
 		rg.GET("/match/:id/commentary", matchDetailsHandler)
 		rg.GET("/match", matchDetailsHandler)
 		rg.GET("/matchDetails", matchDetailsHandler)
@@ -308,16 +313,6 @@ func main() {
 	nestedApiGroup := r.Group("/api/api")
 	setupRoutes(nestedApiGroup)
 
-	// ---------------------------------------------------------
-	// Admin-only routes (ต้องส่ง header X-Admin-Token)
-	// ---------------------------------------------------------
-	adminRoutes := func(rg *gin.RouterGroup) {
-		rg.POST("/match/:id/stream", handleSaveMatchStream)
-		rg.GET("/admin/verify", handleAdminVerify)
-	}
-	adminRoutes(r.Group("/api", AdminAuthMiddleware()))
-	adminRoutes(r.Group("/api/api", AdminAuthMiddleware()))
-
 	port := getEnv("PORT", "8080")
 	log.Printf("🚀 Go Backend (พร้อม WebSocket Live Server & Dynamic Engine) เริ่มทำงานที่ http://localhost:%s", port)
 	r.Run(":" + port)
@@ -345,127 +340,50 @@ func handleWebSocket(c *gin.Context) {
 	go client.readPump()
 }
 
-var (
-	liveTickerCacheData []byte
-	liveTickerLastFetch time.Time
-	liveTickerCacheMu   sync.Mutex
-)
-
 func startLiveTicker() {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		wsClientsMu.Lock()
-		clientCount := len(wsClients)
-		wsClientsMu.Unlock()
+	var lastREST time.Time
+	var lastInvalidate time.Time
 
+	for range ticker.C {
+		// นับ client จริงจาก Hub (ตัวแปร wsClients เดิมไม่เคยถูกเติมค่า
+		// ทำให้ ticker ข้ามทุกครั้ง -> หน้าแรกไม่เคยได้คะแนนสดอัตโนมัติ)
+		clientCount := GlobalLiveHub.ClientCount()
 		if clientCount == 0 {
 			continue
 		}
 
-		// 1. Polling Real Live Matches Data from FotMob with Adaptive Debouncing (35s during live games, 3m during off-peak)
-		todayStr := time.Now().Format("20060102")
-		targetURL := fmt.Sprintf("https://www.fotmob.com/api/matches?date=%s", todayStr)
+		g := goalProvider()
+		if g == nil {
+			continue
+		}
 
-		liveTickerCacheMu.Lock()
-		debounceWindow := 3 * time.Minute
-		if len(liveTickerCacheData) > 0 {
-			cacheStr := string(liveTickerCacheData)
-			// Check if any match is currently live (in progress)
-			if strings.Contains(cacheStr, `"started":true`) && !strings.Contains(cacheStr, `"finished":true`) ||
-				strings.Contains(cacheStr, `liveTime`) || strings.Contains(cacheStr, `"short":"HT"`) ||
-				strings.Contains(cacheStr, `"short":"1H"`) || strings.Contains(cacheStr, `"short":"2H"`) {
-				debounceWindow = 35 * time.Second
+		// 1. REST sweep ทุก ~3 นาที (1 call เท่านั้น ได้ทุกคู่) เพื่อครอบคลุมทุกลีก
+		//    ส่วนคะแนนล่าสุด realtime มาจาก WebSocket push อยู่แล้ว (0 โควตา)
+		sweepEvery := time.Duration(envInt("GOAL_LIVE_SWEEP_SEC", 180)) * time.Second
+		if time.Since(lastREST) >= sweepEvery {
+			if _, err := g.LiveFixtures(); err == nil {
+				lastREST = time.Now()
+			}
+
+			// ถ้ามีคู่แข่งใหม่ที่ยังไม่อยู่ในรายการวันนี้ -> สั่งโหลดรายการใหม่ (จำกัด 1 ครั้ง/2 นาที)
+			if time.Since(lastInvalidate) > 2*time.Minute && g.HasUnknownLiveMatches() {
+				g.InvalidateTodayCache()
+				lastInvalidate = time.Now()
+				log.Printf("🔄 live ticker: พบคู่แข่งใหม่ -> โหลดรายการวันนี้ใหม่")
 			}
 		}
 
-		useCached := time.Since(liveTickerLastFetch) < debounceWindow && len(liveTickerCacheData) > 0
-		var data []byte
-		var err error
-
-		if useCached {
-			data = liveTickerCacheData
-		} else {
-			data, err = fetchFromFotmob(targetURL)
-			if err == nil && len(data) > 0 {
-				liveTickerCacheData = data
-				liveTickerLastFetch = time.Now()
-			} else if len(liveTickerCacheData) > 0 {
-				data = liveTickerCacheData
-				err = nil
-			}
-		}
-		liveTickerCacheMu.Unlock()
-
-		var liveUpdates []map[string]interface{}
-
-		if err == nil && len(data) > 0 {
-			var result struct {
-				Leagues []struct {
-					Matches []struct {
-						ID     int `json:"id"`
-						Status struct {
-							LiveTime struct {
-								Short string `json:"short"`
-							} `json:"liveTime"`
-							Reason struct {
-								Short string `json:"short"`
-							} `json:"reason"`
-							Finished bool   `json:"finished"`
-							Started  bool   `json:"started"`
-							ScoreStr string `json:"scoreStr"`
-						} `json:"status"`
-						Home struct {
-							Score int `json:"score"`
-						} `json:"home"`
-						Away struct {
-							Score int `json:"score"`
-						} `json:"away"`
-					} `json:"matches"`
-				} `json:"leagues"`
-			}
-
-			if realMatches, transformErr := TransformRapidAPIMatchesToRealMatches(data); transformErr == nil && len(realMatches) > 0 {
-				for _, rm := range realMatches {
-					liveUpdates = append(liveUpdates, map[string]interface{}{
-						"match_id":   rm.MatchID,
-						"status":     rm.Status,
-						"home_score": rm.HomeTeam.Score,
-						"away_score": rm.AwayTeam.Score,
-					})
-				}
-			} else if err := json.Unmarshal(data, &result); err == nil {
-				for _, league := range result.Leagues {
-					for _, m := range league.Matches {
-						statusStr := m.Status.LiveTime.Short
-						if statusStr == "" {
-							statusStr = m.Status.Reason.Short
-						}
-						if statusStr == "" && m.Status.Finished {
-							statusStr = "FT"
-						}
-
-						liveUpdates = append(liveUpdates, map[string]interface{}{
-							"match_id":   m.ID,
-							"status":     statusStr,
-							"home_score": m.Home.Score,
-							"away_score": m.Away.Score,
-						})
-					}
-				}
-			}
-		}
-
-		// Fallback Mock update if no live match data found
+		// 2. อ่านสถานะรวมจาก memory (ไม่ยิง upstream / ไม่มี mock fallback แล้ว)
+		liveUpdates := g.LiveUpdatesSnapshot()
 		if len(liveUpdates) == 0 {
-			liveUpdates = append(liveUpdates, map[string]interface{}{
-				"match_id":   4200001,
-				"status":     "Live",
-				"home_score": 2,
-				"away_score": 1,
-			})
+			continue
 		}
+
+		// หมายเหตุ: ถอด fallback ข้อมูลปลอม (match_id 4200001) ออกแล้ว
+		// ถ้าไม่มีคู่แข่งจริงในระบบ ก็ไม่ส่งอะไรเลย ห้ามส่งข้อมูลจำลองเข้า WS
 
 		// 2. Process Goal Events & FCM Alerts
 		for _, update := range liveUpdates {
@@ -596,84 +514,6 @@ func handleSaveFavorites(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "saved", "favorites": body.Favorites, "user_key": userKey})
 }
 
-// ---------------------------------------------------------
-// Live Stream Handlers
-// ---------------------------------------------------------
-
-func handleGetMatchStream(c *gin.Context) {
-	matchID := c.Param("id")
-	if matchID == "" {
-		matchID = c.Query("id")
-	}
-
-	var customStreams []StreamServerOption
-	if GlobalDB != nil && matchID != "" {
-		customStreams = GlobalDB.GetMatchStreams(matchID)
-	}
-
-	if len(customStreams) > 0 {
-		c.JSON(http.StatusOK, gin.H{
-			"match_id": matchID,
-			"source":   "custom",
-			"servers":  customStreams,
-		})
-		return
-	}
-
-	// Default broadcast channels
-	defaultServers := []StreamServerOption{
-		{
-			ID:      "srv-1",
-			Name:    "Server 1 (สัญญาณหลัก HD 1080p)",
-			URL:     "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
-			Quality: "1080p",
-		},
-		{
-			ID:      "srv-2",
-			Name:    "Server 2 (สัญญาณสำรอง 720p)",
-			URL:     "https://test-streams.mux.dev/issue664_0/prog_index.m3u8",
-			Quality: "720p",
-		},
-		{
-			ID:      "srv-3",
-			Name:    "Server 3 (สัญญาณบรรยายไทย)",
-			URL:     "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
-			Quality: "720p",
-		},
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"match_id": matchID,
-		"source":   "default",
-		"servers":  defaultServers,
-	})
-}
-
-func handleSaveMatchStream(c *gin.Context) {
-	matchID := c.Param("id")
-	if matchID == "" {
-		matchID = c.Query("id")
-	}
-
-	var body struct {
-		Servers []StreamServerOption `json:"servers"`
-	}
-	if err := c.BindJSON(&body); err != nil || matchID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "ข้อมูลไม่ถูกต้อง"})
-		return
-	}
-
-	if GlobalDB != nil {
-		GlobalDB.SaveMatchStreams(matchID, body.Servers)
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"status":   "saved",
-		"match_id": matchID,
-		"servers":  body.Servers,
-	})
-}
-
 func handleFCMRegister(c *gin.Context) {
 	var body struct {
 		FCMToken string `json:"fcm_token"`
@@ -754,6 +594,31 @@ func rateLimiterMiddleware() gin.HandlerFunc {
 // Helper Functions & Caching Logic
 // ---------------------------------------------------------
 
+// handleSourcesStatus รายงานสถานะแหล่งข้อมูล + โควตาคงเหลือ (ไม่เปิดเผย key)
+func handleSourcesStatus(c *gin.Context) {
+	active := ""
+	for _, p := range providerChain {
+		if p.Enabled() && p.Budget().Remaining() > 0 {
+			active = p.Name()
+			break
+		}
+	}
+
+	var goalWS interface{}
+	if g := goalProvider(); g != nil {
+		goalWS = g.WSStatus()
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":          "ok",
+		"active_provider": active,
+		"providers":       snapshotProviders(),
+		"goal_ws":         goalWS,
+		"registry":        registry.Counts(),
+		"generated_at":    time.Now().Format(time.RFC3339),
+	})
+}
+
 func handleProxy(cacheKeyPattern string, ttl time.Duration, targetURLBuilder func(c *gin.Context) string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		paramOrQuery := c.Param("id")
@@ -791,14 +656,25 @@ func handleProxy(cacheKeyPattern string, ttl time.Duration, targetURLBuilder fun
 			}
 		}
 
-		// 2. Fetch from Upstream API (FotMob or Real Football Engine)
+		// 2. Fetch from Upstream API (Data Provider ก่อน แล้วค่อย FotMob/Engine)
 		dataType := ResolveDataType(cacheKeyPattern)
 
 		var data []byte
 		var err error
+		sourceTag := "fotmob"
 
-		if dataType == "match" {
-			data, err = fetchCompleteMatchDetails(paramOrQuery)
+		if dataType == "matches" {
+			if raw, src, ok := fetchMatchesFromProviders(paramOrQuery); ok {
+				data, sourceTag = raw, src
+			} else {
+				data, err = fetchFromFotmob(targetURL)
+			}
+		} else if dataType == "match" {
+			if raw, src, ok := fetchMatchDetailsFromProviders(paramOrQuery); ok {
+				data, sourceTag = raw, src
+			} else {
+				data, err = fetchCompleteMatchDetails(paramOrQuery)
+			}
 		} else if dataType == "team" {
 			data, err = fetchCompleteTeamDetails(paramOrQuery)
 		} else if dataType == "team-squad" {
@@ -812,7 +688,7 @@ func handleProxy(cacheKeyPattern string, ttl time.Duration, targetURLBuilder fun
 		}
 
 		if err == nil && len(data) > 0 {
-			if dataType == "matches" {
+			if dataType == "matches" && sourceTag == "fotmob" {
 				if transformed, transformErr := TransformRapidAPIMatchesToRealMatches(data); transformErr == nil && len(transformed) > 0 {
 					data, _ = json.Marshal(transformed)
 				}
@@ -861,14 +737,24 @@ func handleProxy(cacheKeyPattern string, ttl time.Duration, targetURLBuilder fun
 			}
 
 			// 3. Save to Cache on Success
+			//    หน้า detail จาก Data Provider: แมตช์จบแล้วผลไม่เปลี่ยน -> เก็บ 6 ชม.
+			//    ถ้ายังแข่งอยู่ -> เก็บสั้น 90 วิ (ไม่กินโควตาเมื่อมีคนดูซ้ำ)
+			cacheTTL := ttl
+			if dataType == "match" && sourceTag != "fotmob" {
+				if matchDetailsFinished(data) {
+					cacheTTL = 6 * time.Hour
+				} else {
+					cacheTTL = 90 * time.Second
+				}
+			}
 			if rdb != nil {
-				rdb.Set(ctx, cacheKey, string(data), ttl)
+				rdb.Set(ctx, cacheKey, string(data), cacheTTL)
 			} else {
-				memoryCache.Set(cacheKey, data, ttl)
+				memoryCache.Set(cacheKey, data, cacheTTL)
 			}
 
 			c.Header("X-Cache", "MISS")
-			c.Header("X-Data-Source", "FotMob-Live")
+			c.Header("X-Data-Source", sourceTag)
 			c.Data(http.StatusOK, "application/json; charset=utf-8", data)
 			return
 		}
@@ -918,6 +804,11 @@ func fetchFromFotmob(targetURL string) ([]byte, error) {
 	}
 
 	// 2. Fallback to RapidAPI if Direct FotMob fails or is rate-limited
+	//    (โควตาฟรีแค่ 500 req/เดือน -> ต้องผ่าน budget governor เสมอ)
+	if ok, reason := rapidBudgetInstance().Allow(); !ok {
+		return nil, fmt.Errorf("rapidapi budget: %s", reason)
+	}
+
 	rapidKey := getRapidAPIKey()
 	rapidHost := getEnv("RAPIDAPI_HOST", DefaultRapidAPIHost)
 	if rapidKey == "" {
@@ -966,13 +857,22 @@ func fetchFromFotmob(targetURL string) ([]byte, error) {
 			resp.Body.Close()
 		}
 		if err != nil {
+			rapidBudgetInstance().Failure(err)
 			return nil, err
 		}
-		return nil, fmt.Errorf("fotmob returned status: %d", resp.StatusCode)
+		failErr := fmt.Errorf("fotmob returned status: %d", resp.StatusCode)
+		rapidBudgetInstance().Failure(failErr)
+		return nil, failErr
 	}
 	defer resp.Body.Close()
 
-	return io.ReadAll(resp.Body)
+	body, errRead := io.ReadAll(resp.Body)
+	if errRead != nil {
+		rapidBudgetInstance().Failure(errRead)
+		return nil, errRead
+	}
+	rapidBudgetInstance().Success(1, nil)
+	return body, nil
 }
 
 func fetchCompleteMatchDetails(matchID string) ([]byte, error) {
