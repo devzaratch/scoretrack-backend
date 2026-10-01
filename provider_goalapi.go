@@ -44,10 +44,10 @@ type GoalProvider struct {
 	doneAt    map[int]time.Time // เวลาที่คู่นั้นถูกปิดเป็น FT (ใช้ prune ทีหลัง)
 
 	// WebSocket push (แผนฟรี: subscribe ได้สูงสุด 25 คู่, ไม่กินโควตา)
-	wsConn     *websocket.Conn
-	wsWriteMu  sync.Mutex
-	wsUp       bool
-	wsSubs     map[int]bool
+	wsConn      *websocket.Conn
+	wsWriteMu   sync.Mutex
+	wsUp        bool
+	wsSubs      map[int]bool
 	wsNeedResub bool // มีคู่ใหม่ตอนชุดเต็ม -> เปิด session ใหม่ทันที
 
 	leagueIndex   map[string]int // league ULID -> apiId (int)
@@ -60,10 +60,10 @@ type goalDayCache struct {
 }
 
 type goalLeague struct {
-	ID   string `json:"id"`
+	ID    string `json:"id"`
 	APIID string `json:"apiId"`
-	Name string `json:"name"`
-	Logo string `json:"logo"`
+	Name  string `json:"name"`
+	Logo  string `json:"logo"`
 }
 
 type goalTeamRef struct {
@@ -73,51 +73,51 @@ type goalTeamRef struct {
 }
 
 type goalFixture struct {
-	ID             string        `json:"id"`
-	APIID          string        `json:"apiId"`
-	CountryName    string        `json:"countryName"`
-	LeagueID       string        `json:"leagueId"`
-	LeagueName     string        `json:"leagueName"`
-	MatchDate      string        `json:"matchDate"`
-	MatchTime      string        `json:"matchTime"`
-	KickoffUTC     string        `json:"kickoffUtc"`
-	MatchStatus    string        `json:"matchStatus"`
-	MatchLive      string        `json:"matchLive"`
-	MatchMinute    string        `json:"matchMinute"`
-	MatchElapsed   *int          `json:"matchElapsed"`
-	MatchPeriod    string        `json:"matchPeriod"`
-	HomeTeamID     string        `json:"homeTeamId"`
-	HomeTeamName   string        `json:"homeTeamName"`
-	HomeTeamScore  *string       `json:"homeTeamScore"`
-	HomeTeamFT     *string       `json:"homeTeamFtScore"`
-	HomeTeamHT     *string       `json:"homeTeamHalftimeScore"`
-	HomeTeamPen    *string       `json:"homeTeamPenaltyScore"`
-	AwayTeamID     string        `json:"awayTeamId"`
-	AwayTeamName   string        `json:"awayTeamName"`
-	AwayTeamScore  *string       `json:"awayTeamScore"`
-	AwayTeamFT     *string       `json:"awayTeamFtScore"`
-	AwayTeamHT     *string       `json:"awayTeamHalftimeScore"`
-	AwayTeamPen    *string       `json:"awayTeamPenaltyScore"`
-	TeamHomeBadge  string        `json:"teamHomeBadge"`
-	TeamAwayBadge  string        `json:"teamAwayBadge"`
-	LeagueLogo     string        `json:"leagueLogo"`
-	StageName      string        `json:"stageName"`
-	MatchStadium   string        `json:"matchStadium"`
-	MatchReferee   string        `json:"matchReferee"`
-	League         *goalLeague   `json:"league"`
-	HomeTeam       *goalTeamRef  `json:"homeTeam"`
-	AwayTeam       *goalTeamRef  `json:"awayTeam"`
+	ID            string       `json:"id"`
+	APIID         string       `json:"apiId"`
+	CountryName   string       `json:"countryName"`
+	LeagueID      string       `json:"leagueId"`
+	LeagueName    string       `json:"leagueName"`
+	MatchDate     string       `json:"matchDate"`
+	MatchTime     string       `json:"matchTime"`
+	KickoffUTC    string       `json:"kickoffUtc"`
+	MatchStatus   string       `json:"matchStatus"`
+	MatchLive     string       `json:"matchLive"`
+	MatchMinute   string       `json:"matchMinute"`
+	MatchElapsed  *int         `json:"matchElapsed"`
+	MatchPeriod   string       `json:"matchPeriod"`
+	HomeTeamID    string       `json:"homeTeamId"`
+	HomeTeamName  string       `json:"homeTeamName"`
+	HomeTeamScore *string      `json:"homeTeamScore"`
+	HomeTeamFT    *string      `json:"homeTeamFtScore"`
+	HomeTeamHT    *string      `json:"homeTeamHalftimeScore"`
+	HomeTeamPen   *string      `json:"homeTeamPenaltyScore"`
+	AwayTeamID    string       `json:"awayTeamId"`
+	AwayTeamName  string       `json:"awayTeamName"`
+	AwayTeamScore *string      `json:"awayTeamScore"`
+	AwayTeamFT    *string      `json:"awayTeamFtScore"`
+	AwayTeamHT    *string      `json:"awayTeamHalftimeScore"`
+	AwayTeamPen   *string      `json:"awayTeamPenaltyScore"`
+	TeamHomeBadge string       `json:"teamHomeBadge"`
+	TeamAwayBadge string       `json:"teamAwayBadge"`
+	LeagueLogo    string       `json:"leagueLogo"`
+	StageName     string       `json:"stageName"`
+	MatchStadium  string       `json:"matchStadium"`
+	MatchReferee  string       `json:"matchReferee"`
+	League        *goalLeague  `json:"league"`
+	HomeTeam      *goalTeamRef `json:"homeTeam"`
+	AwayTeam      *goalTeamRef `json:"awayTeam"`
 
 	// มีเฉพาะตอนเรียก GET /fixtures/:id
-	Events        []goalEvent          `json:"events"`
-	Cards         []goalCard           `json:"cards"`
-	Substitutions []goalSubstitution   `json:"substitutions"`
-	Lineups       []goalLineupEntry    `json:"lineups"`
-	Statistics    []goalStatistic      `json:"statistics"`
+	Events        []goalEvent        `json:"events"`
+	Cards         []goalCard         `json:"cards"`
+	Substitutions []goalSubstitution `json:"substitutions"`
+	Lineups       []goalLineupEntry  `json:"lineups"`
+	Statistics    []goalStatistic    `json:"statistics"`
 }
 
 type goalFixturesResponse struct {
-	Success    bool `json:"success"`
+	Success    bool          `json:"success"`
 	Data       []goalFixture `json:"data"`
 	Pagination *struct {
 		Total   int  `json:"total"`
@@ -125,13 +125,13 @@ type goalFixturesResponse struct {
 		Offset  int  `json:"offset"`
 		HasMore bool `json:"hasMore"`
 	} `json:"pagination"`
-	Error   string `json:"error"`
-	Code    string `json:"code"`
+	Error string `json:"error"`
+	Code  string `json:"code"`
 }
 
 type goalLeaguesResponse struct {
-	Success bool `json:"success"`
-	Data    []goalLeague `json:"data"`
+	Success    bool         `json:"success"`
+	Data       []goalLeague `json:"data"`
 	Pagination *struct {
 		Total   int  `json:"total"`
 		Limit   int  `json:"limit"`
@@ -145,20 +145,20 @@ type goalLeaguesResponse struct {
 func NewGoalProvider() *GoalProvider {
 	key := strings.TrimSpace(getEnv("GOAL_API_KEY", ""))
 	return &GoalProvider{
-		baseURL:    strings.TrimRight(getEnv("GOAL_API_BASE", goalAPIBase), "/"),
-		key:        key,
-		client:     &http.Client{Timeout: 12 * time.Second},
-		budget:     NewSourceBudget("goalapi", envInt("GOAL_DAILY_LIMIT", 1000), envInt("GOAL_MINUTE_LIMIT", 60)),
-		dayCache:   make(map[string]goalDayCache),
-		liveState:  make(map[int]RealMatch),
-		lastSeen:   make(map[int]RealMatch),
-		doneAt:     make(map[int]time.Time),
-		wsSubs:     make(map[int]bool),
+		baseURL:     strings.TrimRight(getEnv("GOAL_API_BASE", goalAPIBase), "/"),
+		key:         key,
+		client:      &http.Client{Timeout: 12 * time.Second},
+		budget:      NewSourceBudget("goalapi", envInt("GOAL_DAILY_LIMIT", 1000), envInt("GOAL_MINUTE_LIMIT", 60)),
+		dayCache:    make(map[string]goalDayCache),
+		liveState:   make(map[int]RealMatch),
+		lastSeen:    make(map[int]RealMatch),
+		doneAt:      make(map[int]time.Time),
+		wsSubs:      make(map[int]bool),
 		leagueIndex: make(map[string]int),
 	}
 }
 
-func (p *GoalProvider) Name() string      { return "goalapi" }
+func (p *GoalProvider) Name() string          { return "goalapi" }
 func (p *GoalProvider) Budget() *SourceBudget { return p.budget }
 func (p *GoalProvider) Enabled() bool {
 	return p.key != "" && envBool("GOAL_API_ENABLED", true)
@@ -405,16 +405,16 @@ func (p *GoalProvider) toRealMatch(f goalFixture) (RealMatch, bool) {
 	}
 
 	return RealMatch{
-		MatchID:   matchID,
-		LeagueID:  p.goalLeagueIDFor(f.LeagueID),
-		League:    leagueName,
-		Country:   f.CountryName,
-		Status:    goalStatusString(f),
-		MatchTime: f.KickoffUTC,
-		Time:      kickoffLocal,
+		MatchID:    matchID,
+		LeagueID:   p.goalLeagueIDFor(f.LeagueID),
+		League:     leagueName,
+		Country:    f.CountryName,
+		Status:     goalStatusString(f),
+		MatchTime:  f.KickoffUTC,
+		Time:       kickoffLocal,
 		LeagueLogo: leagueLogo,
-		HomeTeam: RealTeam{Name: homeName, Logo: homeBadge, Score: goalIntScore(firstNonNil(f.HomeTeamScore, f.HomeTeamFT))},
-		AwayTeam: RealTeam{Name: awayName, Logo: awayBadge, Score: goalIntScore(firstNonNil(f.AwayTeamScore, f.AwayTeamFT))},
+		HomeTeam:   RealTeam{Name: homeName, Logo: homeBadge, Score: goalIntScore(firstNonNil(f.HomeTeamScore, f.HomeTeamFT))},
+		AwayTeam:   RealTeam{Name: awayName, Logo: awayBadge, Score: goalIntScore(firstNonNil(f.AwayTeamScore, f.AwayTeamFT))},
 	}, true
 }
 
@@ -430,6 +430,17 @@ func (p *GoalProvider) rememberFixture(f goalFixture) {
 	if f.APIID != "" {
 		registry.Remember("match", f.APIID, p.Name(), f.ID)
 	}
+	// badge รูปทีมมีรูปแบบ .../badges/102_manchester-united.jpg -> เลข 102 คือ apiId
+	if f.HomeTeamID != "" {
+		if apiID := goalBadgeAPIID(f.TeamHomeBadge); apiID != "" {
+			registry.Remember("team", apiID, p.Name(), f.HomeTeamID)
+		}
+	}
+	if f.AwayTeamID != "" {
+		if apiID := goalBadgeAPIID(f.TeamAwayBadge); apiID != "" {
+			registry.Remember("team", apiID, p.Name(), f.AwayTeamID)
+		}
+	}
 	if f.LeagueID != "" {
 		p.mu.Lock()
 		apiID, ok := p.leagueIndex[f.LeagueID]
@@ -438,6 +449,31 @@ func (p *GoalProvider) rememberFixture(f goalFixture) {
 			registry.Remember("league", strconv.Itoa(apiID), p.Name(), f.LeagueID)
 		}
 	}
+}
+
+// goalBadgeAPIID ดึงเลข apiId จากชื่อไฟล์ badge เช่น ".../badges/102_manchester-united.jpg" -> "102"
+func goalBadgeAPIID(badge string) string {
+	if badge == "" {
+		return ""
+	}
+	base := badge
+	if i := strings.LastIndex(base, "/"); i >= 0 {
+		base = base[i+1:]
+	}
+	if i := strings.Index(base, "_"); i > 0 {
+		base = base[:i]
+	} else {
+		return ""
+	}
+	if base == "" {
+		return ""
+	}
+	for _, r := range base {
+		if r < '0' || r > '9' {
+			return ""
+		}
+	}
+	return base
 }
 
 // ---------------------------------------------------------------------------
@@ -821,13 +857,13 @@ type goalSubstitution struct {
 }
 
 type goalLineupEntry struct {
-	PlayerID      *string `json:"playerId"`
-	PlayerKey     string  `json:"playerKey"`
-	LineupPlayer  string  `json:"lineupPlayer"`
-	LineupNumber  *string `json:"lineupNumber"`
-	LineupPosition string `json:"lineupPosition"`
-	Team          string  `json:"team"`
-	Type          string  `json:"type"`
+	PlayerID       *string `json:"playerId"`
+	PlayerKey      string  `json:"playerKey"`
+	LineupPlayer   string  `json:"lineupPlayer"`
+	LineupNumber   *string `json:"lineupNumber"`
+	LineupPosition string  `json:"lineupPosition"`
+	Team           string  `json:"team"`
+	Type           string  `json:"type"`
 }
 
 type goalStatistic struct {
@@ -845,18 +881,18 @@ type goalComment struct {
 }
 
 type goalH2HMatch struct {
-	MatchID   string `json:"match_id"`
-	MatchDate string `json:"match_date"`
-	MatchTime string `json:"match_time"`
+	MatchID    string `json:"match_id"`
+	MatchDate  string `json:"match_date"`
+	MatchTime  string `json:"match_time"`
 	LeagueName string `json:"league_name"`
 	LeagueLogo string `json:"league_logo"`
-	Status    string `json:"match_status"`
-	HomeName  string `json:"match_hometeam_name"`
-	AwayName  string `json:"match_awayteam_name"`
-	HomeScore string `json:"match_hometeam_score"`
-	AwayScore string `json:"match_awayteam_score"`
-	HomeBadge string `json:"team_home_badge"`
-	AwayBadge string `json:"team_away_badge"`
+	Status     string `json:"match_status"`
+	HomeName   string `json:"match_hometeam_name"`
+	AwayName   string `json:"match_awayteam_name"`
+	HomeScore  string `json:"match_hometeam_score"`
+	AwayScore  string `json:"match_awayteam_score"`
+	HomeBadge  string `json:"team_home_badge"`
+	AwayBadge  string `json:"team_away_badge"`
 }
 
 func derefStr(v *string) string {
@@ -1038,7 +1074,7 @@ func buildGoalMatchDetails(d goalFixture, h2h []goalH2HMatch, commentary []goalC
 			"stats":  stats,
 			"h2h":    map[string]interface{}{"matches": h2hMatches},
 		},
-		"commentary":   commentaryList,
+		"commentary":    commentaryList,
 		"liveStatusStr": statusShort,
 		"data_source":   "goalapi",
 	}
@@ -1278,12 +1314,12 @@ func buildGoalH2H(h2h []goalH2HMatch) []interface{} {
 	out := make([]interface{}, 0, len(h2h))
 	for _, m := range h2h {
 		out = append(out, map[string]interface{}{
-			"id":      m.MatchID,
-			"time":    thaiDateLabel(m.MatchDate, m.MatchTime),
-			"league":  m.LeagueName,
-			"status":  map[string]interface{}{"scoreStr": m.HomeScore + " - " + m.AwayScore, "long": m.Status},
-			"home":    map[string]interface{}{"name": m.HomeName, "score": atoiOr(m.HomeScore, 0), "logo": m.HomeBadge},
-			"away":    map[string]interface{}{"name": m.AwayName, "score": atoiOr(m.AwayScore, 0), "logo": m.AwayBadge},
+			"id":     m.MatchID,
+			"time":   thaiDateLabel(m.MatchDate, m.MatchTime),
+			"league": m.LeagueName,
+			"status": map[string]interface{}{"scoreStr": m.HomeScore + " - " + m.AwayScore, "long": m.Status},
+			"home":   map[string]interface{}{"name": m.HomeName, "score": atoiOr(m.HomeScore, 0), "logo": m.HomeBadge},
+			"away":   map[string]interface{}{"name": m.AwayName, "score": atoiOr(m.AwayScore, 0), "logo": m.AwayBadge},
 		})
 	}
 	return out

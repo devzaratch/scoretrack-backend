@@ -8,7 +8,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -205,7 +204,7 @@ func main() {
 		return fmt.Sprintf("https://www.fotmob.com/api/matchDetails?matchId=%s", matchID)
 	})
 
-	leagueHandler := handleProxy("league:%s", 30*time.Minute, func(c *gin.Context) string {
+	leagueURLBuilder := func(c *gin.Context) string {
 		leagueID := c.Param("id")
 		if leagueID == "" {
 			leagueID = c.Query("id")
@@ -215,7 +214,12 @@ func main() {
 			return fmt.Sprintf("https://www.fotmob.com/api/leagues?id=%s&season=%s", leagueID, season)
 		}
 		return fmt.Sprintf("https://www.fotmob.com/api/leagues?id=%s", leagueID)
-	})
+	}
+	// แยก cache key ต่อ sub-route (ก่อนหน้านี้ /league/:id/table ชนกับ /league/:id)
+	leagueHandler := handleProxy("league:%s", 30*time.Minute, leagueURLBuilder)
+	leagueTableHandler := handleProxy("league:table:%s", 10*time.Minute, leagueURLBuilder)
+	leagueFixturesHandler := handleProxy("league:fixtures:%s", 10*time.Minute, leagueURLBuilder)
+	leagueStatsHandler := handleProxy("league:stats:%s", 30*time.Minute, leagueURLBuilder)
 
 	teamHandler := handleProxy("team:%s", 30*time.Minute, func(c *gin.Context) string {
 		teamID := c.Param("id")
@@ -249,13 +253,8 @@ func main() {
 		return fmt.Sprintf("https://www.fotmob.com/api/playerData?id=%s", playerID)
 	})
 
-	searchHandler := handleProxy("search:%s", 1*time.Hour, func(c *gin.Context) string {
-		term := c.Query("q")
-		if term == "" {
-			term = c.Query("term")
-		}
-		return fmt.Sprintf("https://www.fotmob.com/api/search/suggest?term=%s", url.QueryEscape(term))
-	})
+	// กล่องค้นหา: GOAL 3 endpoint (FotMob suggest ตายแล้ว 404) — ดู phase1b_search.go
+	searchHandler := searchSuggestHandler
 
 	// Register Routes under /api and /api/api (Safety Alias)
 	setupRoutes := func(rg *gin.RouterGroup) {
@@ -281,9 +280,9 @@ func main() {
 
 		// League
 		rg.GET("/league/:id", leagueHandler)
-		rg.GET("/league/:id/table", leagueHandler)
-		rg.GET("/league/:id/fixtures", leagueHandler)
-		rg.GET("/league/:id/stats", leagueHandler)
+		rg.GET("/league/:id/table", leagueTableHandler)
+		rg.GET("/league/:id/fixtures", leagueFixturesHandler)
+		rg.GET("/league/:id/stats", leagueStatsHandler)
 		rg.GET("/league", leagueHandler)
 		rg.GET("/leagues", leagueHandler)
 
@@ -620,6 +619,25 @@ func handleSourcesStatus(c *gin.Context) {
 	})
 }
 
+// leagueKindFromPattern แปลง cache key pattern ของลีกเป็น kind ที่ LeagueProvider รู้จัก
+//
+//	"league:%s"          -> ""        (รายละเอียดลีก)
+//	"league:table:%s"    -> "table"
+//	"league:fixtures:%s" -> "fixtures"
+//	"league:stats:%s"    -> "stats"   (GOAL ไม่มี -> provider คืน false เอง)
+func leagueKindFromPattern(pattern string) string {
+	switch {
+	case strings.HasPrefix(pattern, "league:table:"):
+		return "table"
+	case strings.HasPrefix(pattern, "league:fixtures:"):
+		return "fixtures"
+	case strings.HasPrefix(pattern, "league:stats:"):
+		return "stats"
+	default:
+		return ""
+	}
+}
+
 func handleProxy(cacheKeyPattern string, ttl time.Duration, targetURLBuilder func(c *gin.Context) string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		paramOrQuery := c.Param("id")
@@ -677,13 +695,30 @@ func handleProxy(cacheKeyPattern string, ttl time.Duration, targetURLBuilder fun
 				data, err = fetchCompleteMatchDetails(paramOrQuery)
 			}
 		} else if dataType == "team" {
-			data, err = fetchCompleteTeamDetails(paramOrQuery)
+			if raw, src, ok := fetchTeamFromProviders("", paramOrQuery); ok {
+				data, sourceTag = raw, src
+			} else {
+				data, err = fetchCompleteTeamDetails(paramOrQuery)
+			}
 		} else if dataType == "team-squad" {
-			data, err = fetchTeamSquad(paramOrQuery)
+			if raw, src, ok := fetchTeamFromProviders("squad", paramOrQuery); ok {
+				data, sourceTag = raw, src
+			} else {
+				data, err = fetchTeamSquad(paramOrQuery)
+			}
 		} else if dataType == "team-fixtures" {
-			data, err = fetchTeamFixtures(paramOrQuery)
+			if raw, src, ok := fetchTeamFromProviders("fixtures", paramOrQuery); ok {
+				data, sourceTag = raw, src
+			} else {
+				data, err = fetchTeamFixtures(paramOrQuery)
+			}
 		} else if dataType == "league" {
-			data, err = fetchCompleteLeagueDetails(paramOrQuery)
+			kind := leagueKindFromPattern(cacheKeyPattern)
+			if raw, src, ok := fetchLeagueFromProviders(kind, paramOrQuery); ok {
+				data, sourceTag = raw, src
+			} else {
+				data, err = fetchCompleteLeagueDetails(paramOrQuery)
+			}
 		} else {
 			data, err = fetchFromFotmob(targetURL)
 		}
@@ -696,11 +731,12 @@ func handleProxy(cacheKeyPattern string, ttl time.Duration, targetURLBuilder fun
 			}
 
 			// Validate if league data is incomplete (e.g. RapidAPI metadata-only JSON)
+			// ข้ามเมื่อได้ข้อมูลจาก Data Provider (GOAL) เพราะ shape ต่างกัน
 			var rawMap map[string]interface{}
 			if errJson := json.Unmarshal(data, &rawMap); errJson == nil {
 				_, hasTable := rawMap["table"]
 				_, hasDetails := rawMap["details"]
-				if dataType == "league" && (!hasTable || !hasDetails) {
+				if dataType == "league" && sourceTag == "fotmob" && (!hasTable || !hasDetails) {
 					realData := GetRealData(dataType, paramOrQuery)
 					if len(realData) > 0 {
 						var realMap map[string]interface{}

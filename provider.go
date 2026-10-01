@@ -27,13 +27,13 @@ type SourceBudget struct {
 	dailyLimit  int
 	minuteLimit int
 
-	dayKey       string
-	usedToday    int
-	requests     int
-	minuteMarks  []time.Time
-	hasHeader    bool
-	headerLeft   int
-	resetUnix    int64
+	dayKey      string
+	usedToday   int
+	requests    int
+	minuteMarks []time.Time
+	hasHeader   bool
+	headerLeft  int
+	resetUnix   int64
 
 	consecutiveFails int
 	openUntil        time.Time
@@ -673,6 +673,75 @@ func fetchMatchDetailsFromProviders(matchID string) ([]byte, string, bool) {
 		}
 		data, err := p.MatchDetails(matchID)
 		if err != nil {
+			continue
+		}
+		if len(data) > 0 {
+			return data, p.Name(), true
+		}
+	}
+	return nil, "", false
+}
+
+// LeagueProvider — แหล่งข้อมูลที่ดึงหน้าลีกได้ (Phase 1b)
+//
+//	kind: "" = รายละเอียดลีก | "table" = ตารางคะแนน | "fixtures" = โปรแกรม+ผล
+//kind "stats" ไม่มีใน GOAL -> ให้ fallback ไปทางเดิม (ไม่เรียก interface นี้)
+type LeagueProvider interface {
+	LeagueData(kind, leagueID string) ([]byte, error)
+}
+
+// fetchLeagueFromProviders ดึงข้อมูลหน้าลีกจาก provider แรกที่รองรับ
+func fetchLeagueFromProviders(kind, leagueID string) ([]byte, string, bool) {
+	if kind == "stats" {
+		return nil, "", false
+	}
+	for _, p := range providerChain {
+		if !p.Enabled() {
+			continue
+		}
+		lp, ok := p.(LeagueProvider)
+		if !ok {
+			continue
+		}
+		if okBudget, _ := p.Budget().Allow(); !okBudget {
+			continue
+		}
+		data, err := lp.LeagueData(kind, leagueID)
+		if err != nil {
+			log.Printf("⚠️ %s LeagueData(%q, %s): %v", p.Name(), kind, leagueID, err)
+			continue
+		}
+		if len(data) > 0 {
+			return data, p.Name(), true
+		}
+	}
+	return nil, "", false
+}
+
+// TeamProvider — แหล่งข้อมูลที่ดึงหน้าทีมได้ (Phase 1b P2)
+//
+//	kind: "" = ภาพรวม | "squad" = รายชื่อนักเตะ | "fixtures" = โปรแกรม+ผล
+type TeamProvider interface {
+	TeamData(kind, teamID string) ([]byte, error)
+}
+
+// fetchTeamFromProviders ดึงข้อมูลหน้าทีมจาก provider แรกที่รองรับ
+// คืน false เมื่อ id ไม่ resolve ได้ (เช่น เลข FotMob เก่า) -> caller ใช้ทางเดิมต่อ
+func fetchTeamFromProviders(kind, teamID string) ([]byte, string, bool) {
+	for _, p := range providerChain {
+		if !p.Enabled() {
+			continue
+		}
+		tp, ok := p.(TeamProvider)
+		if !ok {
+			continue
+		}
+		if okBudget, _ := p.Budget().Allow(); !okBudget {
+			continue
+		}
+		data, err := tp.TeamData(kind, teamID)
+		if err != nil {
+			log.Printf("⚠️ %s TeamData(%q, %s): %v", p.Name(), kind, teamID, err)
 			continue
 		}
 		if len(data) > 0 {
