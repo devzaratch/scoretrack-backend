@@ -719,6 +719,13 @@ func handleProxy(cacheKeyPattern string, ttl time.Duration, targetURLBuilder fun
 			} else {
 				data, err = fetchCompleteLeagueDetails(paramOrQuery)
 			}
+		} else if dataType == "player" {
+			// Phase 1c: หน้าโปรไฟล์นักเตะ -> GOAL ก่อน ถ้า resolve ไม่ได้/ล้ม ถอยไป FotMob เหมือนเดิม
+			if raw, src, ok := fetchPlayerFromProviders(paramOrQuery); ok {
+				data, sourceTag = raw, src
+			} else {
+				data, err = fetchFromFotmob(targetURL)
+			}
 		} else {
 			data, err = fetchFromFotmob(targetURL)
 		}
