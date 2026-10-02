@@ -685,16 +685,13 @@ func fetchMatchDetailsFromProviders(matchID string) ([]byte, string, bool) {
 // LeagueProvider — แหล่งข้อมูลที่ดึงหน้าลีกได้ (Phase 1b)
 //
 //	kind: "" = รายละเอียดลีก | "table" = ตารางคะแนน | "fixtures" = โปรแกรม+ผล
-//kind "stats" ไม่มีใน GOAL -> ให้ fallback ไปทางเดิม (ไม่เรียก interface นี้)
+//	kind: "stats" = ดาวซัลโว/แอสซิสต์/สถิติทีม (GOAL มี /leagues/{id}/top-scorers แล้ว)
 type LeagueProvider interface {
 	LeagueData(kind, leagueID string) ([]byte, error)
 }
 
 // fetchLeagueFromProviders ดึงข้อมูลหน้าลีกจาก provider แรกที่รองรับ
 func fetchLeagueFromProviders(kind, leagueID string) ([]byte, string, bool) {
-	if kind == "stats" {
-		return nil, "", false
-	}
 	for _, p := range providerChain {
 		if !p.Enabled() {
 			continue

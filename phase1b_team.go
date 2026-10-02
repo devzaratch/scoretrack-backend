@@ -14,7 +14,7 @@ package main
 //                      overview:{form:[W/D/L], nextMatch}, table:[{data:{table:{all,home,away}}}],
 //                      name, country, primaryLeagueName, data_source}
 //   - kind "squad":   {teamName, squad:[{title:"coach|keepers|defenders|midfielders|attackers|others",
-//                      members:[{id,name,role,shirtNumber,cname}]}]}
+//                      members:[{id,name,role,shirtNumber,cname,image?}]}]}
 //   - kind "fixtures": {fixtures:[{id,timeUTC,status:{finished,scoreStr,reason:{short}},
 //                      home:{id,name,logo}, away:{id,name,logo}}], tournament}
 // ---------------------------------------------------------------------------
@@ -388,6 +388,10 @@ func (p *GoalProvider) teamSquadJSON(ulid, teamID string) ([]byte, error) {
 		}
 		if pl.Country != nil && *pl.Country != "" {
 			m["cname"] = *pl.Country
+		}
+		// รูปนักเตะจาก GOAL (มีจริง ~76% ของตัว) — หน้าเว็บใช้แทน URL FotMob เดิม
+		if pl.Image != nil && *pl.Image != "" {
+			m["image"] = *pl.Image
 		}
 		buckets[key] = append(buckets[key], m)
 	}

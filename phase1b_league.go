@@ -15,11 +15,14 @@ package main
 //   - kind "table":   {leagueName, season, all, home, away} (+ table:[กลุ่ม] ถ้าหลาย stage)
 //   - kind "fixtures": {allFixtures:[{id,timeUTC,status:{finished,scoreStr,reason:{short}},
 //                      home:{id,name,logo}, away:{id,name,logo}}]}
+//   - kind "stats":    {topScorers:[{id?,rank,name,teamName,stat:{value}}],
+//                      players:[{header,topThree:[...]}], teams:[{header,items:[...]}]}
 // ---------------------------------------------------------------------------
 
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -106,7 +109,7 @@ type goalStandingsEnvelope struct {
 
 // ---------- จุดเข้าหลัก ----------
 
-// LeagueData อ่านข้อมูลหน้าลีกจาก GOAL (kind: "" | "table" | "fixtures")
+// LeagueData อ่านข้อมูลหน้าลีกจาก GOAL (kind: "" | "table" | "fixtures" | "stats")
 func (p *GoalProvider) LeagueData(kind, leagueID string) ([]byte, error) {
 	if !p.Enabled() {
 		return nil, fmt.Errorf("goalapi disabled")
@@ -122,6 +125,8 @@ func (p *GoalProvider) LeagueData(kind, leagueID string) ([]byte, error) {
 		return p.leagueTableJSON(ulid, leagueID)
 	case "fixtures":
 		return p.leagueFixturesJSON(ulid, leagueID)
+	case "stats":
+		return p.leagueStatsJSON(ulid, leagueID)
 	}
 	return nil, fmt.Errorf("league kind %q ไม่รองรับ", kind)
 }
@@ -480,6 +485,234 @@ func goalLeagueFixtureItem(f goalFixture) map[string]interface{} {
 		},
 	}
 	return item
+}
+
+// ---------- kind "stats" : ดาวซัลโว / แอสซิสต์ / สถิติทีม ----------
+
+// goalTopScorerRow แถวจาก GET /leagues/{ulid}/top-scorers (พิสูจน์จาก API จริง 2026-10-02)
+// playerKey = apiId ของนักเตะ (ตรงกับ field apiId ของ /players?search=)
+type goalTopScorerRow struct {
+	PlayerPlace  string `json:"playerPlace"`
+	PlayerName   string `json:"playerName"`
+	PlayerKey    string `json:"playerKey"`
+	TeamName     string `json:"teamName"`
+	TeamKey      string `json:"teamKey"`
+	Goals        string `json:"goals"`
+	Assists      string `json:"assists"`
+	PenaltyGoals string `json:"penaltyGoals"`
+}
+
+type goalTopScorersResponse struct {
+	Success  bool               `json:"success"`
+	LeagueID string             `json:"leagueId"`
+	Data     []goalTopScorerRow `json:"data"`
+	Error    string             `json:"error"`
+}
+
+// leagueStatsJSON สรุปสถิติหน้าลีกให้ league/client.tsx อ่านออกตรง ๆ
+// คืนรูป: {topScorers:[...], players:[{header,topThree}], teams:[{header,items}], data_source}
+func (p *GoalProvider) leagueStatsJSON(ulid, leagueID string) ([]byte, error) {
+	body, err := p.do("/leagues/" + ulid + "/top-scorers")
+	if err != nil {
+		return nil, err
+	}
+	var resp goalTopScorersResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, err
+	}
+	if len(resp.Data) == 0 {
+		return nil, fmt.Errorf("goalapi top-scorers ว่าง (%s)", leagueID)
+	}
+
+	// เรียงเอง — GOAL ไม่ได้รับประกันลำดับ (playerPlace บางลีกโดด)
+	rows := make([]goalTopScorerRow, len(resp.Data))
+	copy(rows, resp.Data)
+	sort.SliceStable(rows, func(i, j int) bool {
+		gi, gj := atoiOr(rows[i].Goals, 0), atoiOr(rows[j].Goals, 0)
+		if gi != gj {
+			return gi > gj
+		}
+		return atoiOr(rows[i].Assists, 0) > atoiOr(rows[j].Assists, 0)
+	})
+	byAssists := make([]goalTopScorerRow, len(rows))
+	copy(byAssists, rows)
+	sort.SliceStable(byAssists, func(i, j int) bool {
+		ai, aj := atoiOr(byAssists[i].Assists, 0), atoiOr(byAssists[j].Assists, 0)
+		if ai != aj {
+			return ai > aj
+		}
+		return atoiOr(byAssists[i].Goals, 0) > atoiOr(byAssists[j].Goals, 0)
+	})
+
+	// หน้าเว็บแสดงเฉพาะ 3 อันดับแรก -> resolve ULID (กิน 1 call ครั้งแรกแล้วจำใน registry)
+	topPlayer := func(r goalTopScorerRow, rank int, val string, wantLink bool) map[string]interface{} {
+		m := map[string]interface{}{
+			"rank":     rank,
+			"name":     r.PlayerName,
+			"teamName": r.TeamName,
+			"stat":     map[string]interface{}{"value": val},
+		}
+		if ulid := p.resolveScorerULID(r, wantLink); ulid != "" {
+			m["id"] = ulid
+		} else if r.PlayerKey != "" {
+			m["id"] = r.PlayerKey
+		}
+		return m
+	}
+
+	topScorers := make([]map[string]interface{}, 0, len(rows))
+	for i, r := range rows {
+		topScorers = append(topScorers, topPlayer(r, i+1, r.Goals, i < 3))
+	}
+
+	scorerTop3 := make([]interface{}, 0, 3)
+	for i := 0; i < 3 && i < len(rows); i++ {
+		scorerTop3 = append(scorerTop3, topPlayer(rows[i], i+1, rows[i].Goals, true))
+	}
+	assistTop3 := make([]interface{}, 0, 3)
+	for i := 0; i < 3 && i < len(byAssists); i++ {
+		assistTop3 = append(assistTop3, topPlayer(byAssists[i], i+1, byAssists[i].Assists, true))
+	}
+
+	players := []interface{}{
+		map[string]interface{}{"header": "ผู้นำทำประตู (Top Scorers)", "topThree": scorerTop3},
+		map[string]interface{}{"header": "ผู้นำทำแอสซิสต์ (Top Assists)", "topThree": assistTop3},
+	}
+
+	out := map[string]interface{}{
+		"topScorers":  topScorers,
+		"players":     players,
+		"data_source": "goalapi",
+	}
+	// สถิติทีมมาจาก standings (ถ้าดึงไม่ได้ ไม่ให้หน้า stats ทั้งหมดล้ม)
+	if teams := p.leagueTeamStats(ulid); len(teams) > 0 {
+		out["teams"] = teams
+	}
+	return json.Marshal(out)
+}
+
+// resolveScorerULID หา ULID ของนักเตะจาก top-scorers
+// ลำดับ: registry (ไม่กินโควตา) -> /players?search=แบบชื่อตรงเป๊ะ (1 call แล้วจำถาวร)
+// โควตาไม่พอ/หาไม่เจอ -> คืน "" (caller ใช้ playerKey ไปก่อน หน้าเว็บไม่พัง)
+func (p *GoalProvider) resolveScorerULID(r goalTopScorerRow, wantLink bool) string {
+	if r.PlayerKey != "" {
+		if ref, ok := registry.Lookup("player", r.PlayerKey); ok && ref.Source == p.Name() && ref.ULID != "" {
+			return ref.ULID
+		}
+	}
+	if !wantLink {
+		return ""
+	}
+	name := strings.TrimSpace(r.PlayerName)
+	if name == "" {
+		return ""
+	}
+	if ok, _ := p.budget.Allow(); !ok {
+		return ""
+	}
+	body, err := p.do("/players?search=" + url.QueryEscape(name))
+	if err != nil {
+		return ""
+	}
+	var resp goalTeamPlayersResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return ""
+	}
+	for _, pl := range resp.Data {
+		if !strings.EqualFold(strings.TrimSpace(pl.Name), name) {
+			continue
+		}
+		if pl.ID == "" {
+			continue
+		}
+		if pl.APIID != "" {
+			registry.Remember("player", pl.APIID, p.Name(), pl.ID)
+		}
+		if r.PlayerKey != "" {
+			registry.Remember("player", r.PlayerKey, p.Name(), pl.ID)
+		}
+		return pl.ID
+	}
+	return ""
+}
+
+// leagueTeamStats สถิติทีมจากตารางคะแนน (1 call) — แทนข้อมูลตัวอย่าง hardcode ใน client
+func (p *GoalProvider) leagueTeamStats(ulid string) []interface{} {
+	body, err := p.do("/leagues/" + ulid + "/standings")
+	if err != nil {
+		return nil
+	}
+	var env goalStandingsEnvelope
+	if err := json.Unmarshal(body, &env); err != nil {
+		return nil
+	}
+
+	type teamRow struct {
+		id, name, logo string
+		gf, ga, w      int
+	}
+	seen := map[string]bool{}
+	rows := make([]teamRow, 0, len(env.Data))
+	for _, r := range env.Data {
+		if r.TeamID == "" || seen[r.TeamID] || atoiOr(r.OverallPlayed, 0) == 0 {
+			continue
+		}
+		seen[r.TeamID] = true
+		tr := teamRow{
+			id:   r.TeamID,
+			name: r.TeamName,
+			gf:   atoiOr(r.OverallGF, 0),
+			ga:   atoiOr(r.OverallGA, 0),
+			w:    atoiOr(r.OverallW, 0),
+		}
+		if r.Team != nil {
+			tr.logo = r.Team.Badge
+		}
+		rows = append(rows, tr)
+	}
+	if len(rows) < 3 {
+		return nil
+	}
+
+	item := func(rank int, t teamRow, val string) map[string]interface{} {
+		m := map[string]interface{}{"rank": rank, "id": t.id, "name": t.name, "val": val}
+		if t.logo != "" {
+			m["logo"] = t.logo
+		}
+		return m
+	}
+	top3 := func(less func(a, b teamRow) bool) []interface{} {
+		sorted := make([]teamRow, len(rows))
+		copy(sorted, rows)
+		sort.SliceStable(sorted, func(i, j int) bool { return less(sorted[i], sorted[j]) })
+		out := make([]interface{}, 0, 3)
+		for i := 0; i < 3 && i < len(sorted); i++ {
+			out = append(out, sorted[i])
+		}
+		return out
+	}
+
+	mostGoals := top3(func(a, b teamRow) bool { return a.gf > b.gf })
+	fewestConceded := top3(func(a, b teamRow) bool { return a.ga < b.ga })
+	mostWins := top3(func(a, b teamRow) bool { return a.w > b.w })
+
+	items := func(list []interface{}, val func(teamRow) string) []interface{} {
+		out := make([]interface{}, 0, len(list))
+		for i, v := range list {
+			t := v.(teamRow)
+			out = append(out, item(i+1, t, val(t)))
+		}
+		return out
+	}
+
+	return []interface{}{
+		map[string]interface{}{"header": "ทีมที่ทำประตูมากที่สุด (Most Goals)",
+			"items": items(mostGoals, func(t teamRow) string { return fmt.Sprintf("%d ประตู", t.gf) })},
+		map[string]interface{}{"header": "ทีมที่เสียประตูน้อยที่สุด (Fewest Conceded)",
+			"items": items(fewestConceded, func(t teamRow) string { return fmt.Sprintf("%d ประตู", t.ga) })},
+		map[string]interface{}{"header": "ทีมที่ชนะมากที่สุด (Most Wins)",
+			"items": items(mostWins, func(t teamRow) string { return fmt.Sprintf("%d นัด", t.w) })},
+	}
 }
 
 func firstNonEmptyStr(vals ...string) string {
