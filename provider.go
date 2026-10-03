@@ -127,6 +127,8 @@ func (b *SourceBudget) Success(n int, hdr *RateLimitHeader) {
 	b.minuteMarks = append(b.minuteMarks, b.lastAttempt)
 	b.consecutiveFails = 0
 	b.openUntil = time.Time{}
+	// provider ทำงานได้ปกติอีกแล้ว → ล้าง error เดิมออกด้วย (ไม่งั้นค้างถึง rollDay)
+	b.lastError = ""
 
 	if hdr != nil {
 		if hdr.Limit > 0 {
