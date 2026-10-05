@@ -265,6 +265,9 @@ func main() {
 		rg.GET("/search", searchHandler)
 		rg.GET("/search/suggest", searchHandler)
 
+		// News (Phase 1d: BBC Sport RSS, free, outside GOAL budget)
+		rg.GET("/news", newsHandler)
+
 		// Matches
 		rg.GET("/matches", matchesHandler)
 		rg.GET("/matchesDay", matchesHandler)
