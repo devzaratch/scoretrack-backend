@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -116,15 +117,43 @@ type SearchProvider interface {
 }
 
 // SearchSuggestions ค้น 3 กลุ่ม (teams/leagues/players) แล้วรวมเป็น array-of-groups
+// 3 กลุ่มยิงพร้อมกัน (goroutine) — เรียก upstream เท่าเดิม (3 calls) แค่ไม่ต้องรอตามลำดับ
 func (p *GoalProvider) SearchSuggestions(term string) ([]interface{}, error) {
 	if !p.Enabled() {
 		return nil, fmt.Errorf("goalapi disabled")
 	}
 	q := strings.TrimSpace(term)
+	t0 := time.Now()
 
-	teamGroups, errT := p.searchGroup("team", "/teams?search="+url.QueryEscape(q)+"&limit=6")
-	leagueGroups, errL := p.searchGroup("league", "/leagues?search="+url.QueryEscape(q)+"&limit=5")
-	playerGroups, errP := p.searchGroup("player", "/players?search="+url.QueryEscape(q)+"&limit=6")
+	type grpRes struct {
+		items []interface{}
+		err   error
+		dur   time.Duration
+	}
+	jobs := []struct {
+		kind, path string
+	}{
+		{"team", "/teams?search=" + url.QueryEscape(q) + "&limit=6"},
+		{"league", "/leagues?search=" + url.QueryEscape(q) + "&limit=5"},
+		{"player", "/players?search=" + url.QueryEscape(q) + "&limit=6"},
+	}
+	res := make([]grpRes, len(jobs))
+	var wg sync.WaitGroup
+	for i, jb := range jobs {
+		wg.Add(1)
+		go func(i int, kind, path string) {
+			defer wg.Done()
+			t := time.Now()
+			items, err := p.searchGroup(kind, path)
+			res[i] = grpRes{items, err, time.Since(t)}
+		}(i, jb.kind, jb.path)
+	}
+	wg.Wait()
+	log.Printf("search(%q) teams=%v leagues=%v players=%v total=%v", q, res[0].dur, res[1].dur, res[2].dur, time.Since(t0))
+
+	teamGroups, errT := res[0].items, res[0].err
+	leagueGroups, errL := res[1].items, res[1].err
+	playerGroups, errP := res[2].items, res[2].err
 	if errT != nil {
 		log.Printf("ℹ️ goalapi search teams(%q): %v", q, errT)
 	}
