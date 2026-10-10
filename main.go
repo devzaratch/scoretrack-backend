@@ -444,12 +444,6 @@ func handleChatWebSocket(c *gin.Context) {
 // Auth, User & Push Notification Handlers
 // ---------------------------------------------------------
 
-var (
-	// Match Subscribers Map: matchID -> set of FCM tokens
-	matchSubscribers   = make(map[int]map[string]bool)
-	matchSubscribersMu sync.Mutex
-)
-
 func getUserIdentifier(c *gin.Context) string {
 	authHeader := c.GetHeader("Authorization")
 	userKey := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
@@ -638,20 +632,18 @@ func handleMatchSubscribe(c *gin.Context) {
 		token = "session_token_" + c.ClientIP()
 	}
 
-	matchSubscribersMu.Lock()
-	if matchSubscribers[body.MatchID] == nil {
-		matchSubscribers[body.MatchID] = make(map[string]bool)
+	// เก็บลง PersistentDB ที่เดียวกับที่ DispatchFCMPush อ่าน
+	// (ของเดิมเขียนลง map ใน memory อีกตัว ส่งจริงเลยไม่เคยเจอคนตาม)
+	var subCount int
+	if GlobalDB != nil {
+		if body.Action == "unsubscribe" {
+			subCount = GlobalDB.UnsubscribeMatch(body.MatchID, token)
+			log.Printf("🔔 ยกเลิกการติดตามการแจ้งเตือนแมตช์ #%d (Token: %s)", body.MatchID, token)
+		} else {
+			subCount = GlobalDB.SubscribeMatch(body.MatchID, token)
+			log.Printf("🔔 ลงทะเบียนการแจ้งเตือนประตูแมตช์ #%d สำเร็จ (Token: %s)", body.MatchID, token)
+		}
 	}
-
-	if body.Action == "unsubscribe" {
-		delete(matchSubscribers[body.MatchID], token)
-		log.Printf("🔔 ยกเลิกการติดตามการแจ้งเตือนแมตช์ #%d (Token: %s)", body.MatchID, token)
-	} else {
-		matchSubscribers[body.MatchID][token] = true
-		log.Printf("🔔 ลงทะเบียนการแจ้งเตือนประตูแมตช์ #%d สำเร็จ (Token: %s)", body.MatchID, token)
-	}
-	subCount := len(matchSubscribers[body.MatchID])
-	matchSubscribersMu.Unlock()
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":      "success",
