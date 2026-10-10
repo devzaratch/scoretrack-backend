@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -472,20 +474,101 @@ func handleGoogleAuth(c *gin.Context) {
 	var body struct {
 		Token string `json:"token"`
 	}
-	if err := c.BindJSON(&body); err != nil {
+	if err := c.BindJSON(&body); err != nil || strings.TrimSpace(body.Token) == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "ข้อมูลไม่ถูกต้อง"})
 		return
 	}
 
+	// ตรวจ Google ID token จริง (ไม่เชื่อ token ดิบจาก client)
+	sub, name, err := verifyGoogleIDToken(c.Request.Context(), strings.TrimSpace(body.Token))
+	if err != nil {
+		log.Printf("❌ Google auth verify ล้มเหลว: %v", err)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "ยืนยันตัวตน Google ไม่สำเร็จ"})
+		return
+	}
+
+	// ออก session token ของเราเอง ผูกกับ google sub
+	sess := make([]byte, 32)
+	if _, err := rand.Read(sess); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "สร้าง session ไม่สำเร็จ"})
+		return
+	}
+	sessionToken := hex.EncodeToString(sess)
+	userKey := "user:g:" + sub
+	if GlobalDB != nil {
+		GlobalDB.SaveUserSession(sessionToken, sub)
+	}
+
+	var favs []int
+	if GlobalDB != nil {
+		favs = GlobalDB.GetUserFavorites(userKey)
+	} else {
+		favs = []int{}
+	}
+
+	log.Printf("✅ Google login สำเร็จ [%s]: %s", userKey, name)
 	c.JSON(http.StatusOK, gin.H{
-		"username": "FootballFan",
-		"token":    "demo_jwt_token_scoretrack",
-		"favs":     []int{4200001, 4200002},
+		"username": name,
+		"token":    sessionToken,
+		"favs":     favs,
 	})
 }
 
+// verifyGoogleIDToken ตรวจ ID token กับ Google แล้วคืน sub + ชื่อ
+func verifyGoogleIDToken(ctx context.Context, idToken string) (sub, name string, err error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", "https://oauth2.googleapis.com/tokeninfo?id_token="+idToken, nil)
+	if err != nil {
+		return "", "", err
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	res, err := client.Do(req)
+	if err != nil {
+		return "", "", err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("google tokeninfo status %d", res.StatusCode)
+	}
+	var info struct {
+		Sub   string `json:"sub"`
+		Aud   string `json:"aud"`
+		Name  string `json:"name"`
+		Email string `json:"email"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&info); err != nil {
+		return "", "", err
+	}
+	if info.Sub == "" {
+		return "", "", fmt.Errorf("token ไม่มี sub")
+	}
+	// กัน token จากแอปอื่น: aud ต้องตรง client id ของเรา (ถ้าตั้งไว้)
+	if want := strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID")); want != "" && info.Aud != want {
+		return "", "", fmt.Errorf("aud ไม่ตรง client id ของเรา")
+	}
+	display := strings.TrimSpace(info.Name)
+	if display == "" {
+		display = strings.TrimSpace(info.Email)
+	}
+	if display == "" {
+		display = "FootballFan"
+	}
+	return info.Sub, display, nil
+}
+
+// resolveUserKey ผูก Bearer session -> google sub ก่อน fallback แบบเดิม
+func resolveUserKey(c *gin.Context) string {
+	authHeader := c.GetHeader("Authorization")
+	token := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+	if token != "" && token != "null" && token != "undefined" && GlobalDB != nil {
+		if sub := GlobalDB.GetSessionSub(token); sub != "" {
+			return "user:g:" + sub
+		}
+	}
+	return getUserIdentifier(c)
+}
+
 func handleGetFavorites(c *gin.Context) {
-	userKey := getUserIdentifier(c)
+	userKey := resolveUserKey(c)
 	var favs []int
 	if GlobalDB != nil {
 		favs = GlobalDB.GetUserFavorites(userKey)
@@ -508,7 +591,7 @@ func handleSaveFavorites(c *gin.Context) {
 		return
 	}
 
-	userKey := getUserIdentifier(c)
+	userKey := resolveUserKey(c)
 	if GlobalDB != nil {
 		GlobalDB.SaveUserFavorites(userKey, body.Favorites)
 	}

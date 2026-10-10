@@ -12,6 +12,7 @@ import (
 type StoreData struct {
 	ChatMessages       map[string][]map[string]interface{} `json:"chat_messages"`
 	UserFavorites      map[string][]int                    `json:"user_favorites"`
+	UserSessions       map[string]string                   `json:"user_sessions"` // session token -> google sub
 	MatchSubscriptions map[int][]string                    `json:"match_subscriptions"`
 	FCMTokens          map[string]int64                    `json:"fcm_tokens"` // token -> unix timestamp ที่ลงทะเบียนล่าสุด
 }
@@ -37,6 +38,7 @@ func InitDB() *PersistentDB {
 		data: StoreData{
 			ChatMessages:       make(map[string][]map[string]interface{}),
 			UserFavorites:      make(map[string][]int),
+			UserSessions:       make(map[string]string),
 			MatchSubscriptions: make(map[int][]string),
 			FCMTokens:          make(map[string]int64),
 		},
@@ -51,6 +53,9 @@ func InitDB() *PersistentDB {
 			}
 			if loaded.UserFavorites != nil {
 				db.data.UserFavorites = loaded.UserFavorites
+			}
+			if loaded.UserSessions != nil {
+				db.data.UserSessions = loaded.UserSessions
 			}
 			if loaded.MatchSubscriptions != nil {
 				db.data.MatchSubscriptions = loaded.MatchSubscriptions
@@ -152,6 +157,25 @@ func (db *PersistentDB) GetUserFavorites(userID string) []int {
 		return []int{}
 	}
 	return favs
+}
+
+// --------------------------------------------------
+// User Sessions (Google sub <-> session token)
+// --------------------------------------------------
+
+func (db *PersistentDB) SaveUserSession(token, sub string) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	db.data.UserSessions[token] = sub
+	db.dirty = true
+}
+
+func (db *PersistentDB) GetSessionSub(token string) string {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	return db.data.UserSessions[token]
 }
 
 // --------------------------------------------------
