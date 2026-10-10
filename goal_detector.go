@@ -124,7 +124,7 @@ func DispatchFCMPush(matchID int, title, body string) {
 	log.Printf("📱 Dispatching FCM Push Notification for Match #%d to %d subscribers", matchID, len(tokens))
 
 	projectID := getEnv("FCM_PROJECT_ID", "")
-	accessToken := getEnv("FCM_ACCESS_TOKEN", "")
+	accessToken := getFCMAccessToken()
 
 	// 1. FCM HTTP v1 API (Recommended by Google)
 	if projectID != "" && accessToken != "" {
