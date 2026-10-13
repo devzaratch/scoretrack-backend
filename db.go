@@ -14,7 +14,10 @@ type StoreData struct {
 	UserFavorites      map[string][]int                    `json:"user_favorites"`
 	UserSessions       map[string]string                   `json:"user_sessions"` // session token -> google sub
 	MatchSubscriptions map[int][]string                    `json:"match_subscriptions"`
-	FCMTokens          map[string]int64                    `json:"fcm_tokens"` // token -> unix timestamp ที่ลงทะเบียนล่าสุด
+	FCMTokens          map[string]int64                    `json:"fcm_tokens"`       // token -> unix timestamp ที่ลงทะเบียนล่าสุด
+	Predictions               map[string]map[string]interface{} `json:"predictions"`      // userID -> matchID -> prediction data
+	UserNotificationPrefs    map[string]map[string]interface{} `json:"notification_prefs"` // userID -> preferences
+	Achievements           map[string][]string               `json:"achievements"`       // userID -> list of unlocked achievement IDs
 }
 
 type PersistentDB struct {
@@ -41,6 +44,9 @@ func InitDB() *PersistentDB {
 			UserSessions:       make(map[string]string),
 			MatchSubscriptions: make(map[int][]string),
 			FCMTokens:          make(map[string]int64),
+			Predictions:               make(map[string]map[string]interface{}),
+			UserNotificationPrefs:    make(map[string]map[string]interface{}),
+			Achievements:             make(map[string][]string),
 		},
 	}
 
@@ -62,6 +68,15 @@ func InitDB() *PersistentDB {
 			}
 			if loaded.FCMTokens != nil {
 				db.data.FCMTokens = loaded.FCMTokens
+			}
+			if loaded.Predictions != nil {
+				db.data.Predictions = loaded.Predictions
+			}
+			if loaded.UserNotificationPrefs != nil {
+				db.data.UserNotificationPrefs = loaded.UserNotificationPrefs
+			}
+			if loaded.Achievements != nil {
+				db.data.Achievements = loaded.Achievements
 			}
 			log.Printf("📦 Loaded persistent database from %s", dbPath)
 		}
@@ -287,6 +302,91 @@ func (db *PersistentDB) PruneFCMTokens(maxAge time.Duration) int {
 		db.dirty = true
 	}
 	return removed
+}
+
+// --------------------------------------------------
+// User Predictions Persistence
+// --------------------------------------------------
+
+func (db *PersistentDB) SavePrediction(userID, matchID string, pred map[string]interface{}) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	if db.data.Predictions == nil {
+		db.data.Predictions = make(map[string]map[string]interface{})
+	}
+
+	if db.data.Predictions[userID] == nil {
+		db.data.Predictions[userID] = make(map[string]interface{})
+	}
+	db.data.Predictions[userID][matchID] = pred
+	db.dirty = true
+}
+
+func (db *PersistentDB) GetPredictionsByUser(userID string) map[string]interface{} {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	if db.data.Predictions == nil || db.data.Predictions[userID] == nil {
+		return make(map[string]interface{})
+	}
+
+	result := make(map[string]interface{})
+	for k, v := range db.data.Predictions[userID] {
+		result[k] = v
+	}
+	return result
+}
+
+func (db *PersistentDB) GetAllPredictions() map[string]map[string]interface{} {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	if db.data.Predictions == nil {
+		return make(map[string]map[string]interface{})
+	}
+
+	result := make(map[string]map[string]interface{})
+	for userID, predictions := range db.data.Predictions {
+		result[userID] = make(map[string]interface{})
+		for matchID, pred := range predictions {
+			result[userID][matchID] = pred
+		}
+	}
+	return result
+}
+
+// --------------------------------------------------
+// User Notification Preferences
+// --------------------------------------------------
+
+func (db *PersistentDB) SaveNotificationPrefs(userID string, prefs map[string]interface{}) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	if db.data.UserNotificationPrefs == nil {
+		db.data.UserNotificationPrefs = make(map[string]map[string]interface{})
+	}
+	db.data.UserNotificationPrefs[userID] = prefs
+	db.dirty = true
+}
+
+func (db *PersistentDB) GetNotificationPrefs(userID string) map[string]interface{} {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	if db.data.UserNotificationPrefs == nil {
+		return make(map[string]interface{})
+	}
+	prefs, ok := db.data.UserNotificationPrefs[userID]
+	if !ok {
+		return make(map[string]interface{})
+	}
+	result := make(map[string]interface{})
+	for k, v := range prefs {
+		result[k] = v
+	}
+	return result
 }
 
 // ---------------------------------------------------------

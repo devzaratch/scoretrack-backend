@@ -309,6 +309,17 @@ func main() {
 		rg.POST("/user/favorites", handleSaveFavorites)
 		rg.POST("/user/fcm", handleFCMRegister)
 		rg.POST("/user/match-subscribe", handleMatchSubscribe)
+
+		// Predictions
+		rg.GET("/predictions/leaderboard", handlePredictionsLeaderboard)
+		rg.POST("/predictions/save", handleSavePrediction)
+		rg.GET("/predictions/my", handleGetMyPredictions)
+
+		// Notification Preferences
+		rg.GET("/user/notifications", handleGetNotificationPrefs)
+		rg.POST("/user/notifications", handleSaveNotificationPrefs)
+		rg.GET("/calendar", handleCalendar)
+		rg.GET("/calendar/ical", handleCalendarIcal)
 	}
 
 	apiGroup := r.Group("/api")
@@ -651,6 +662,122 @@ func handleMatchSubscribe(c *gin.Context) {
 		"subscribed":  body.Action != "unsubscribe",
 		"subscribers": subCount,
 	})
+}
+
+// --- Predictions Leaderboard ---
+func handlePredictionsLeaderboard(c *gin.Context) {
+	if GlobalDB == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "DB not ready"})
+		return
+	}
+
+	allPreds := GlobalDB.GetAllPredictions()
+
+	leaderboard := make([]map[string]interface{}, 0)
+	for userID, predictions := range allPreds {
+		leaderboard = append(leaderboard, map[string]interface{}{
+			"user_id":     userID,
+			"predictions": len(predictions),
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"leaderboard": leaderboard,
+		"count":      len(leaderboard),
+		"message":    "Leaderboard feature in development — scoring logic being implemented",
+	})
+}
+
+func handleSavePrediction(c *gin.Context) {
+	var body struct {
+		MatchID     string                 `json:"match_id"`
+		Prediction map[string]interface{} `json:"prediction"`
+	}
+	if err := c.BindJSON(&body); err != nil || body.MatchID == "" || body.Prediction == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ข้อมูลไม่ถูกต้อง"})
+		return
+	}
+
+	userKey := resolveUserKey(c)
+	GlobalDB.SavePrediction(userKey, body.MatchID, body.Prediction)
+
+	c.JSON(http.StatusOK, gin.H{"status": "saved", "match_id": body.MatchID, "user": userKey})
+}
+
+func handleGetMyPredictions(c *gin.Context) {
+	userKey := resolveUserKey(c)
+	preds := GlobalDB.GetPredictionsByUser(userKey)
+	c.JSON(http.StatusOK, gin.H{"predictions": preds, "user": userKey})
+}
+
+func handleGetNotificationPrefs(c *gin.Context) {
+	userKey := resolveUserKey(c)
+	prefs := GlobalDB.GetNotificationPrefs(userKey)
+	c.JSON(http.StatusOK, gin.H{"preferences": prefs, "user": userKey})
+}
+
+func handleSaveNotificationPrefs(c *gin.Context) {
+	var body struct {
+		Preferences map[string]interface{} `json:"preferences"`
+	}
+	if err := c.BindJSON(&body); err != nil || body.Preferences == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ข้อมูลไม่ถูกต้อง"})
+		return
+	}
+
+	userKey := resolveUserKey(c)
+	GlobalDB.SaveNotificationPrefs(userKey, body.Preferences)
+	c.JSON(http.StatusOK, gin.H{"status": "saved", "user": userKey})
+}
+
+// Calendar Handlers
+func handleCalendar(c *gin.Context) {
+	// For now, return mock/fallback calendar events
+	events := []map[string]interface{}{
+		{
+			"match_id": "999999",
+			"home_name": "ททีม A",
+			"away_name": "ทีม B",
+			"start_time": time.Now().Add(24 * time.Hour).Format(time.RFC3339),
+			"status": "scheduled",
+		},
+	}
+	c.JSON(http.StatusOK, gin.H{"calendar": events})
+}
+
+func handleCalendarIcal(c *gin.Context) {
+	events := []map[string]interface{}{
+		{
+			"match_id": "999999",
+			"home_name": "ทีม A",
+			"away_name": "ทีม B",
+			"start_time": time.Now().Add(24 * time.Hour).Format(time.RFC3339),
+			"status": "scheduled",
+		},
+	}
+
+	var lines []string
+	lines = append(lines, "BEGIN:VCALENDAR")
+	lines = append(lines, "VERSION:2.0")
+	lines = append(lines, "PRODID:-//Score-track//Football Calendar//EN")
+	now := time.Now().Format("20060102T150405Z")
+	lines = append(lines, "CREATED:"+now)
+	lines = append(lines, "END:VCALENDAR")
+	lines = append(lines, "")
+
+	for _, e := range events {
+		lines = append(lines, "BEGIN:VEVENT")
+		lines = append(lines, "UID:"+fmt.Sprintf("scoretrack-%s", e["match_id"]))
+		st := e["start_time"].(string)
+		lines = append(lines, "DTSTART:"+st)
+		lines = append(lines, "SUMMARY:"+fmt.Sprintf("%v vs %v", e["home_name"], e["away_name"]))
+		lines = append(lines, "END:VEVENT")
+		lines = append(lines, "")
+	}
+
+	c.Header("Content-Type", "text/calendar; charset=utf-8")
+	c.Header("Content-Disposition", "attachment; filename=scoretrack-calendar.ics")
+	c.Data(http.StatusOK, "text/calendar; charset=utf-8", []byte(strings.Join(lines, "\r\n")))
 }
 
 // Rate Limiter Middleware (120 reqs/min per IP)
