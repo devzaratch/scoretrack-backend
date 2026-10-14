@@ -14,3 +14,6 @@ go-backend
 # Persistent local data
 data/
 *.log
+
+# runtime logs
+logs/

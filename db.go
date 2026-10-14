@@ -1,4 +1,4 @@
-package main
+﻿package main
 
 import (
 	"encoding/json"
@@ -385,6 +385,120 @@ func (db *PersistentDB) GetNotificationPrefs(userID string) map[string]interface
 	result := make(map[string]interface{})
 	for k, v := range prefs {
 		result[k] = v
+	}
+	return result
+}
+
+// ---------------------------------------------------------
+// Admin Stats Methods
+// ---------------------------------------------------------
+
+func (db *PersistentDB) CountUsers() int {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	seen := map[string]bool{}
+	for k := range db.data.UserFavorites {
+		seen[k] = true
+	}
+	for _, sub := range db.data.UserSessions {
+		seen["user:g:"+sub] = true
+	}
+	for k := range db.data.Predictions {
+		seen[k] = true
+	}
+	return len(seen)
+}
+
+func (db *PersistentDB) CountSessions() int {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	return len(db.data.UserSessions)
+}
+
+func (db *PersistentDB) CountFCMTokens() int {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	return len(db.data.FCMTokens)
+}
+
+func (db *PersistentDB) CountPredictions() int {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	total := 0
+	for _, preds := range db.data.Predictions {
+		total += len(preds)
+	}
+	return total
+}
+
+func (db *PersistentDB) CountMatchSubscriptions() int {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	total := 0
+	for _, subs := range db.data.MatchSubscriptions {
+		total += len(subs)
+	}
+	return total
+}
+
+func (db *PersistentDB) CountAchievements() int {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	total := 0
+	for _, ach := range db.data.Achievements {
+		total += len(ach)
+	}
+	return total
+}
+
+func (db *PersistentDB) GetAllUsers() []map[string]interface{} {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	type userInfo struct {
+		key           string
+		favorites     int
+		predictions   int
+		achievements  int
+		hasFCM        bool
+	}
+	users := map[string]*userInfo{}
+
+	getUser := func(key string) *userInfo {
+		if u, ok := users[key]; ok {
+			return u
+		}
+		u := &userInfo{key: key}
+		users[key] = u
+		return u
+	}
+
+	for k, favs := range db.data.UserFavorites {
+		u := getUser(k)
+		u.favorites = len(favs)
+	}
+	for k, preds := range db.data.Predictions {
+		u := getUser(k)
+		u.predictions = len(preds)
+	}
+	for k, ach := range db.data.Achievements {
+		u := getUser(k)
+		u.achievements = len(ach)
+	}
+	for _, sub := range db.data.UserSessions {
+		u := getUser("user:g:" + sub)
+		u.hasFCM = true
+	}
+
+	result := make([]map[string]interface{}, 0, len(users))
+	for _, u := range users {
+		result = append(result, map[string]interface{}{
+			"key":          u.key,
+			"favorites":    u.favorites,
+			"predictions":  u.predictions,
+			"achievements": u.achievements,
+			"has_session":  u.hasFCM,
+		})
 	}
 	return result
 }

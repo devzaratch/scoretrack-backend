@@ -1,4 +1,4 @@
-package main
+﻿package main
 
 // ---------------------------------------------------------------------------
 // Phase 1b P3 — กล่องค้นหา (/api/search) จาก GOAL API
@@ -46,16 +46,9 @@ func searchSuggestHandler(c *gin.Context) {
 	cacheKey := "search:suggest:" + strings.ToLower(term)
 
 	// 1. Cache (Redis ก่อน ค่อย in-memory)
-	if rdb != nil {
-		if cached, err := rdb.Get(ctx, cacheKey).Result(); err == nil && cached != "" {
-			c.Header("X-Cache", "HIT")
-			c.Header("X-Data-Source", "Redis-Cache")
-			c.Data(http.StatusOK, "application/json; charset=utf-8", []byte(cached))
-			return
-		}
-	} else if cached, found := memoryCache.Get(cacheKey); found {
+	if cached, source, found := cacheGet(cacheKey); found {
 		c.Header("X-Cache", "HIT")
-		c.Header("X-Data-Source", "In-Memory-Cache")
+		c.Header("X-Data-Source", source)
 		c.Data(http.StatusOK, "application/json; charset=utf-8", cached)
 		return
 	}
@@ -75,11 +68,7 @@ func searchSuggestHandler(c *gin.Context) {
 	}
 
 	// 3. เก็บ cache 1 ชม.
-	if rdb != nil {
-		rdb.Set(ctx, cacheKey, string(raw), time.Hour)
-	} else {
-		memoryCache.Set(cacheKey, raw, time.Hour)
-	}
+	cacheSet(cacheKey, raw, TTLSearch)
 
 	c.Header("X-Cache", "MISS")
 	c.Header("X-Data-Source", source)

@@ -5,6 +5,7 @@
 // and serves GET /api/news. Approved R-NEWS 5-Oct-2026.
 
 import (
+	"encoding/json"
 	"encoding/xml"
 	"io"
 	"log"
@@ -126,11 +127,25 @@ func staleNews() []newsArticle {
 }
 
 func newsHandler(c *gin.Context) {
+	cacheKey := "news:bbc"
+	if cached, source, found := cacheGet(cacheKey); found {
+		c.Header("X-Cache", "HIT")
+		c.Header("X-Data-Source", source)
+		c.Data(http.StatusOK, "application/json; charset=utf-8", cached)
+		return
+	}
+
 	articles := fetchFootballNews()
+
+	payload := gin.H{
+		"source": "BBC Sport",
+		"count":  len(articles),
+		"items":  articles,
+	}
+	raw, _ := json.Marshal(payload)
+	cacheSet(cacheKey, raw, TTLNews)
+
+	c.Header("X-Cache", "MISS")
 	c.Header("X-Data-Source", "bbc-rss")
-	c.JSON(http.StatusOK, gin.H{
-		"source":  "BBC Sport",
-		"count":   len(articles),
-		"items":   articles,
-	})
+	c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
 }

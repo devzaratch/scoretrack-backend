@@ -1,4 +1,4 @@
-package main
+﻿package main
 
 import (
 	"context"
@@ -116,6 +116,9 @@ func main() {
 		})
 		log.Println("✅ เชื่อมต่อ Redis สำเร็จ!")
 	}
+
+	// เริ่ม Janitor สำหรับ in-memory cache (ถ้าไม่มี Redis)
+	startJanitor()
 
 	// เริ่มต้นหมุน Background Routine สำหรับยิง WebSocket Live Tick ทุก 5 วินาที
 	// 0. Initialize Persistent Database
@@ -263,63 +266,69 @@ func main() {
 		// Sources & Quota status (Phase 1: Data Layer)
 		rg.GET("/_sources", handleSourcesStatus)
 
-		// Search
-		rg.GET("/search", searchHandler)
-		rg.GET("/search/suggest", searchHandler)
+		// Search (limit 30/min — แพง GOAL API)
+		rg.GET("/search", rateLimitMiddleware("search", RLSearch, time.Minute), searchHandler)
+		rg.GET("/search/suggest", rateLimitMiddleware("search", RLSearch, time.Minute), searchHandler)
 
-		// News (Phase 1d: BBC Sport RSS, free, outside GOAL budget)
-		rg.GET("/news", newsHandler)
+		// News (limit 30/min — RSS)
+		rg.GET("/news", rateLimitMiddleware("news", RLNews, time.Minute), newsHandler)
 
-		// Matches
-		rg.GET("/matches", matchesHandler)
-		rg.GET("/matchesDay", matchesHandler)
-		rg.GET("/live", matchesHandler)
-		rg.GET("/allMatches", matchesHandler)
-		rg.GET("/match/live", matchesHandler)
+		// Matches (limit 60/min — proxy)
+		rg.GET("/matches", rateLimitMiddleware("proxy", RLProxy, time.Minute), matchesHandler)
+		rg.GET("/matchesDay", rateLimitMiddleware("proxy", RLProxy, time.Minute), matchesHandler)
+		rg.GET("/live", rateLimitMiddleware("proxy", RLProxy, time.Minute), matchesHandler)
+		rg.GET("/allMatches", rateLimitMiddleware("proxy", RLProxy, time.Minute), matchesHandler)
+		rg.GET("/match/live", rateLimitMiddleware("proxy", RLProxy, time.Minute), matchesHandler)
 
-		// Match Details
-		rg.GET("/match/:id", matchDetailsHandler)
-		rg.GET("/match/:id/commentary", matchDetailsHandler)
-		rg.GET("/match", matchDetailsHandler)
-		rg.GET("/matchDetails", matchDetailsHandler)
+		// Match Details (limit 60/min)
+		rg.GET("/match/:id", rateLimitMiddleware("proxy", RLProxy, time.Minute), matchDetailsHandler)
+		rg.GET("/match/:id/commentary", rateLimitMiddleware("proxy", RLProxy, time.Minute), matchDetailsHandler)
+		rg.GET("/match", rateLimitMiddleware("proxy", RLProxy, time.Minute), matchDetailsHandler)
+		rg.GET("/matchDetails", rateLimitMiddleware("proxy", RLProxy, time.Minute), matchDetailsHandler)
 
-		// League
-		rg.GET("/league/:id", leagueHandler)
-		rg.GET("/league/:id/table", leagueTableHandler)
-		rg.GET("/league/:id/fixtures", leagueFixturesHandler)
-		rg.GET("/league/:id/stats", leagueStatsHandler)
-		rg.GET("/league", leagueHandler)
-		rg.GET("/leagues", leagueHandler)
+		// League (limit 60/min)
+		rg.GET("/league/:id", rateLimitMiddleware("proxy", RLProxy, time.Minute), leagueHandler)
+		rg.GET("/league/:id/table", rateLimitMiddleware("proxy", RLProxy, time.Minute), leagueTableHandler)
+		rg.GET("/league/:id/fixtures", rateLimitMiddleware("proxy", RLProxy, time.Minute), leagueFixturesHandler)
+		rg.GET("/league/:id/stats", rateLimitMiddleware("proxy", RLProxy, time.Minute), leagueStatsHandler)
+		rg.GET("/league", rateLimitMiddleware("proxy", RLProxy, time.Minute), leagueHandler)
+		rg.GET("/leagues", rateLimitMiddleware("proxy", RLProxy, time.Minute), leagueHandler)
 
-		// Team
-		rg.GET("/team/:id/squad", teamSquadHandler)
-		rg.GET("/team/:id/fixtures", teamFixturesHandler)
-		rg.GET("/team/:id", teamHandler)
-		rg.GET("/team", teamHandler)
-		rg.GET("/teams", teamHandler)
+		// Team (limit 60/min)
+		rg.GET("/team/:id/squad", rateLimitMiddleware("proxy", RLProxy, time.Minute), teamSquadHandler)
+		rg.GET("/team/:id/fixtures", rateLimitMiddleware("proxy", RLProxy, time.Minute), teamFixturesHandler)
+		rg.GET("/team/:id", rateLimitMiddleware("proxy", RLProxy, time.Minute), teamHandler)
+		rg.GET("/team", rateLimitMiddleware("proxy", RLProxy, time.Minute), teamHandler)
+		rg.GET("/teams", rateLimitMiddleware("proxy", RLProxy, time.Minute), teamHandler)
 
-		// Player
-		rg.GET("/player/:id", playerHandler)
-		rg.GET("/player", playerHandler)
-		rg.GET("/playerData", playerHandler)
+		// Player (limit 60/min)
+		rg.GET("/player/:id", rateLimitMiddleware("proxy", RLProxy, time.Minute), playerHandler)
+		rg.GET("/player", rateLimitMiddleware("proxy", RLProxy, time.Minute), playerHandler)
+		rg.GET("/playerData", rateLimitMiddleware("proxy", RLProxy, time.Minute), playerHandler)
 
-		// Auth & User Endpoints
-		rg.POST("/auth/google", handleGoogleAuth)
+		// Auth & User Endpoints (auth 10/min, user writes 30/min)
+		rg.POST("/auth/google", rateLimitMiddleware("auth", RLAuth, time.Minute), handleGoogleAuth)
 		rg.GET("/user/favorites", handleGetFavorites)
-		rg.POST("/user/favorites", handleSaveFavorites)
-		rg.POST("/user/fcm", handleFCMRegister)
-		rg.POST("/user/match-subscribe", handleMatchSubscribe)
+		rg.POST("/user/favorites", rateLimitMiddleware("user-write", RLUserWrite, time.Minute), handleSaveFavorites)
+		rg.POST("/user/fcm", rateLimitMiddleware("user-write", RLUserWrite, time.Minute), handleFCMRegister)
+		rg.POST("/user/match-subscribe", rateLimitMiddleware("user-write", RLUserWrite, time.Minute), handleMatchSubscribe)
 
-		// Predictions
+		// Predictions (leaderboard cached 2min, save 30/min)
 		rg.GET("/predictions/leaderboard", handlePredictionsLeaderboard)
-		rg.POST("/predictions/save", handleSavePrediction)
+		rg.POST("/predictions/save", rateLimitMiddleware("prediction", RLPrediction, time.Minute), handleSavePrediction)
 		rg.GET("/predictions/my", handleGetMyPredictions)
 
 		// Notification Preferences
 		rg.GET("/user/notifications", handleGetNotificationPrefs)
-		rg.POST("/user/notifications", handleSaveNotificationPrefs)
+		rg.POST("/user/notifications", rateLimitMiddleware("user-write", RLUserWrite, time.Minute), handleSaveNotificationPrefs)
 		rg.GET("/calendar", handleCalendar)
 		rg.GET("/calendar/ical", handleCalendarIcal)
+
+		// Error reporting (frontend monitoring)
+		rg.POST("/client-errors", rateLimitMiddleware("error-report", RLErrorReport, time.Minute), handleClientError)
+
+		// Admin Panel
+		setupAdminRoutes(rg)
 	}
 
 	apiGroup := r.Group("/api")
@@ -666,6 +675,14 @@ func handleMatchSubscribe(c *gin.Context) {
 
 // --- Predictions Leaderboard ---
 func handlePredictionsLeaderboard(c *gin.Context) {
+	cacheKey := "predictions:leaderboard"
+	if cached, source, found := cacheGet(cacheKey); found {
+		c.Header("X-Cache", "HIT")
+		c.Header("X-Data-Source", source)
+		c.Data(http.StatusOK, "application/json; charset=utf-8", cached)
+		return
+	}
+
 	if GlobalDB == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "DB not ready"})
 		return
@@ -681,11 +698,16 @@ func handlePredictionsLeaderboard(c *gin.Context) {
 		})
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	payload := gin.H{
 		"leaderboard": leaderboard,
 		"count":      len(leaderboard),
 		"message":    "Leaderboard feature in development — scoring logic being implemented",
-	})
+	}
+	raw, _ := json.Marshal(payload)
+	cacheSet(cacheKey, raw, TTLLeaderboard)
+
+	c.Header("X-Cache", "MISS")
+	c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
 }
 
 func handleSavePrediction(c *gin.Context) {
@@ -780,7 +802,43 @@ func handleCalendarIcal(c *gin.Context) {
 	c.Data(http.StatusOK, "text/calendar; charset=utf-8", []byte(strings.Join(lines, "\r\n")))
 }
 
-// Rate Limiter Middleware (120 reqs/min per IP)
+// handleClientError รับ error report จาก frontend แล้วเขียนลง log ไฟล์
+func handleClientError(c *gin.Context) {
+	var body struct {
+		Message string `json:"message"`
+		Source  string `json:"source"`
+		Page    string `json:"page"`
+	}
+	if err := c.BindJSON(&body); err != nil || strings.TrimSpace(body.Message) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ข้อมูลไม่ถูกต้อง"})
+		return
+	}
+
+	// จำกัดความยาวกัน log ถูก spam
+	msg := body.Message
+	if len(msg) > 500 {
+		msg = msg[:500]
+	}
+	src := body.Source
+	if src == "" {
+		src = "unknown"
+	}
+	page := body.Page
+
+	// เขียนลงไฟล์ log
+	logEntry := fmt.Sprintf("[%s] page=%s source=%s msg=%q\n", time.Now().Format(time.RFC3339), page, src, msg)
+	if err := os.MkdirAll("logs", 0755); err == nil {
+		if f, err := os.OpenFile("logs/client-errors.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); err == nil {
+			f.WriteString(logEntry)
+			f.Close()
+		}
+	}
+	log.Printf("⚠️ Client Error [%s] %s: %s", src, page, msg)
+
+	c.JSON(http.StatusOK, gin.H{"status": "logged"})
+}
+
+// Rate Limiter Middleware (120 reqs/min per IP — global safety net)
 func rateLimiterMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ip := c.ClientIP()
@@ -794,6 +852,34 @@ func rateLimiterMiddleware() gin.HandlerFunc {
 		c.Next()
 	}
 }
+
+// rateLimitMiddleware สร้าง per-endpoint limiter (composite key = ip|route)
+// ใช้กับ endpoint ที่แพง/敏感 เช่น auth, search, proxy
+func rateLimitMiddleware(route string, limit int, window time.Duration) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		key := c.ClientIP() + "|" + route
+		if !GlobalRateLimiter.AllowKey(key, limit, window) {
+			c.Header("Retry-After", fmt.Sprintf("%d", int(window.Seconds())))
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error": fmt.Sprintf("คำขอมากเกินไปสำหรับ %s กรุณารอ %v ก่อนลองใหม่", route, window),
+			})
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
+// Rate limit profiles (per-endpoint)
+const (
+	RLAuth          = 10    // auth/google — ป้องกัน token spam
+	RLSearch        = 30    // search suggest — แพง (GOAL API)
+	RLProxy         = 60    // proxy endpoints (matches/league/team/player)
+	RLNews          = 30    // news RSS
+	RLErrorReport   = 20    // client-errors — กัน log spam
+	RLPrediction    = 30    // predictions save
+	RLUserWrite     = 30    // favorites/fcm/subscribe writes
+)
 
 // ---------------------------------------------------------
 // Helper Functions & Caching Logic
@@ -863,21 +949,11 @@ func handleProxy(cacheKeyPattern string, ttl time.Duration, targetURLBuilder fun
 		targetURL := targetURLBuilder(c)
 
 		// 1. Check Redis Cache or In-Memory Cache Fallback
-		if rdb != nil {
-			cachedData, err := rdb.Get(ctx, cacheKey).Result()
-			if err == nil && cachedData != "" {
-				c.Header("X-Cache", "HIT")
-				c.Header("X-Data-Source", "Redis-Cache")
-				c.Data(http.StatusOK, "application/json; charset=utf-8", []byte(cachedData))
-				return
-			}
-		} else {
-			if cachedData, found := memoryCache.Get(cacheKey); found {
-				c.Header("X-Cache", "HIT")
-				c.Header("X-Data-Source", "In-Memory-Cache")
-				c.Data(http.StatusOK, "application/json; charset=utf-8", cachedData)
-				return
-			}
+		if cachedData, cacheSource, found := cacheGet(cacheKey); found {
+			c.Header("X-Cache", "HIT")
+			c.Header("X-Data-Source", cacheSource)
+			c.Data(http.StatusOK, "application/json; charset=utf-8", cachedData)
+			return
 		}
 
 		// 2. Fetch from Upstream API (Data Provider ก่อน แล้วค่อย FotMob/Engine)
@@ -996,11 +1072,7 @@ func handleProxy(cacheKeyPattern string, ttl time.Duration, targetURLBuilder fun
 					cacheTTL = 90 * time.Second
 				}
 			}
-			if rdb != nil {
-				rdb.Set(ctx, cacheKey, string(data), cacheTTL)
-			} else {
-				memoryCache.Set(cacheKey, data, cacheTTL)
-			}
+			cacheSet(cacheKey, data, cacheTTL)
 
 			c.Header("X-Cache", "MISS")
 			c.Header("X-Data-Source", sourceTag)
@@ -1011,11 +1083,7 @@ func handleProxy(cacheKeyPattern string, ttl time.Duration, targetURLBuilder fun
 		dataType = ResolveDataType(cacheKeyPattern)
 		realData := GetRealData(dataType, paramOrQuery)
 		if len(realData) > 0 {
-			if rdb != nil {
-				rdb.Set(ctx, cacheKey, string(realData), ttl)
-			} else {
-				memoryCache.Set(cacheKey, realData, ttl)
-			}
+			cacheSet(cacheKey, realData, ttl)
 		}
 
 		c.Header("X-Cache", "MISS")

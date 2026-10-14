@@ -1,4 +1,4 @@
-package main
+﻿package main
 
 import (
 	"encoding/json"
@@ -326,13 +326,18 @@ func NewMemoryRateLimiter() *MemoryRateLimiter {
 }
 
 func (r *MemoryRateLimiter) Allow(ip string, maxReqs int, window time.Duration) bool {
+	return r.AllowKey(ip, maxReqs, window)
+}
+
+// AllowKey นับ rate ตาม composite key (เช่น ip|/api/auth/google)
+func (r *MemoryRateLimiter) AllowKey(key string, maxReqs int, window time.Duration) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	now := time.Now()
-	rec, exists := r.records[ip]
+	rec, exists := r.records[key]
 	if !exists || now.Sub(rec.LastSeen) > window {
-		r.records[ip] = &ClientRateRecord{LastSeen: now, Count: 1}
+		r.records[key] = &ClientRateRecord{LastSeen: now, Count: 1}
 		return true
 	}
 
