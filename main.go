@@ -317,6 +317,7 @@ func main() {
 		rg.GET("/predictions/leaderboard", handlePredictionsLeaderboard)
 		rg.POST("/predictions/save", rateLimitMiddleware("prediction", RLPrediction, time.Minute), handleSavePrediction)
 		rg.GET("/predictions/my", handleGetMyPredictions)
+		rg.GET("/predictions/my/points", handleMyPoints)
 
 		// Notification Preferences
 		rg.GET("/user/notifications", handleGetNotificationPrefs)
@@ -688,26 +689,24 @@ func handlePredictionsLeaderboard(c *gin.Context) {
 		return
 	}
 
-	allPreds := GlobalDB.GetAllPredictions()
-
-	leaderboard := make([]map[string]interface{}, 0)
-	for userID, predictions := range allPreds {
-		leaderboard = append(leaderboard, map[string]interface{}{
-			"user_id":     userID,
-			"predictions": len(predictions),
-		})
-	}
+	leaderboard := computeLeaderboard()
 
 	payload := gin.H{
 		"leaderboard": leaderboard,
 		"count":      len(leaderboard),
-		"message":    "Leaderboard feature in development — scoring logic being implemented",
+		"scoring":    "ถูกสกอร์เป๊ะ +3 · ถูกผล +1 · ผิด 0",
 	}
 	raw, _ := json.Marshal(payload)
 	cacheSet(cacheKey, raw, TTLLeaderboard)
 
 	c.Header("X-Cache", "MISS")
 	c.Data(http.StatusOK, "application/json; charset=utf-8", raw)
+}
+
+// handleMyPoints คะแนนของฉัน (ใช้หน้า /predictions สรุปแต้ม)
+func handleMyPoints(c *gin.Context) {
+	userKey := resolveUserKey(c)
+	c.JSON(http.StatusOK, gin.H{"user": userKey, "score": userPoints(userKey)})
 }
 
 func handleSavePrediction(c *gin.Context) {
