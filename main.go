@@ -3,6 +3,7 @@
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -101,20 +102,37 @@ func main() {
 	// 0. เตรียม Data Provider layer (GOAL API เป็นหลัก + คุมโควตา + ID registry)
 	initProviders()
 
-	// 1. ตรวจสอบบริการ Redis ก่อนอย่างเงียบๆ (ใช้ 127.0.0.1 บน Windows)
+	// 1. ตรวจสอบบริการ Redis (รองรับ Upstash: REDIS_PASSWORD + REDIS_TLS)
 	redisAddr := getEnv("REDIS_ADDR", "127.0.0.1:6379")
+	redisPassword := getEnv("REDIS_PASSWORD", "")
+	useRedisTLS := strings.EqualFold(getEnv("REDIS_TLS", "false"), "true")
 	conn, err := net.DialTimeout("tcp", redisAddr, 500*time.Millisecond)
 	if err != nil {
 		log.Println("ℹ️ Info: ไม่พบ Redis Server -> สลับไปใช้ Direct Proxy & Mock Fallback (ปกติ หากไม่ได้เปิด Redis)")
 		rdb = nil
 	} else {
 		conn.Close()
-		rdb = redis.NewClient(&redis.Options{
+		opts := &redis.Options{
 			Addr:     redisAddr,
-			Password: "",
+			Password: redisPassword,
 			DB:       0,
-		})
-		log.Println("✅ เชื่อมต่อ Redis สำเร็จ!")
+		}
+		if useRedisTLS {
+			opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+		}
+		client := redis.NewClient(opts)
+		// PING ยืนยันก่อนใช้จริง — Upstash ต้องผ่าน TLS + AUTH ก่อน (TCP connect อย่างเดียวไม่พอ)
+		pingCtx, cancelPing := context.WithTimeout(ctx, 3*time.Second)
+		pingErr := client.Ping(pingCtx).Err()
+		cancelPing()
+		if pingErr != nil {
+			log.Printf("ℹ️ Info: Redis PING ไม่สำเร็จ (%v) -> ใช้ in-memory cache แทน", pingErr)
+			client.Close()
+			rdb = nil
+		} else {
+			rdb = client
+			log.Println("✅ เชื่อมต่อ Redis สำเร็จ!")
+		}
 	}
 
 	// เริ่ม Janitor สำหรับ in-memory cache (ถ้าไม่มี Redis)
