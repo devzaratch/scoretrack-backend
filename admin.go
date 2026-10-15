@@ -41,6 +41,7 @@ func handleAdminStats(c *gin.Context) {
 		"total_predictions":    0,
 		"total_match_subs":     0,
 		"total_achievements":   0,
+		"cache_backend":        cacheBackendName(),
 	}
 	if GlobalDB != nil {
 		stats["total_users"] = GlobalDB.CountUsers()

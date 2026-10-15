@@ -25,6 +25,14 @@ const (
 	TTLPlayer       = 30 * time.Minute  // player profile
 )
 
+// cacheBackendName คืนชื่อ backend ของ cache ปัจจุบัน (ใช้แสดงใน Admin Panel)
+func cacheBackendName() string {
+	if rdb != nil {
+		return "redis"
+	}
+	return "in-memory"
+}
+
 // cacheGet คืนข้อมูลจาก cache ถ้ามี (Redis ก่อน ค่อย memory)
 // คืน ([]byte, source, found)
 func cacheGet(key string) ([]byte, string, bool) {
