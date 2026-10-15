@@ -458,6 +458,7 @@ func handleChatWebSocket(c *gin.Context) {
 		conn:    conn,
 		send:    make(chan []byte, sendChannelCap),
 		matchID: matchID,
+		ip:      c.ClientIP(), // rate limit ต่อ user ใน readPump
 	}
 	client.hub.register <- client
 

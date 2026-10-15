@@ -163,6 +163,7 @@ type ChatClient struct {
 	conn    *websocket.Conn
 	send    chan []byte
 	matchID string
+	ip      string // ใช้ rate limit ต่อ user (กัน spam แชท)
 }
 
 func (c *ChatClient) readPump() {
@@ -182,7 +183,31 @@ func (c *ChatClient) readPump() {
 		if err != nil {
 			break
 		}
-		c.hub.BroadcastToRoom(c.matchID, msg)
+
+		// Rate limit ต่อ IP — เกิน limit ให้เตือนเฉพาะคนส่ง (ไม่ broadcast)
+		if chatRateLimited(c.ip) {
+			warn, _ := json.Marshal(map[string]interface{}{
+				"user": "System",
+				"text": "⚠️ ส่งข้อความเร็วเกินไป กรุณารอสักครู่",
+				"type": "system",
+			})
+			select {
+			case c.send <- warn:
+			default:
+			}
+			continue
+		}
+
+		// กรองคำหยาบ + sanitize — ก่อนบันทึก DB และ broadcast
+		cleaned, masked, ok := CleanChatMessage(msg)
+		if !ok {
+			continue // ข้อความว่างหลัง trim -> ทิ้ง
+		}
+		if masked > 0 {
+			log.Printf("🛡️ chat mod: masked %d bad word(s) in room %s (%s)", masked, c.matchID, c.ip)
+		}
+
+		c.hub.BroadcastToRoom(c.matchID, cleaned)
 	}
 }
 
