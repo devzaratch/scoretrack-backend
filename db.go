@@ -249,6 +249,20 @@ func (db *PersistentDB) GetMatchSubscribers(matchID int) []string {
 	return res
 }
 
+// HasAnyMatchSubscriptions คืน true เมื่อมีแมตช์ใดแมตช์หนึ่งที่มีคน subscribe อยู่
+// (ใช้โดย live ticker ตัดสินใจว่าต้องทำงานต่อแม้ไม่มีคนเปิดเว็บ เพื่อให้ push ถึงมือคนที่กด 🔔)
+func (db *PersistentDB) HasAnyMatchSubscriptions() bool {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	for _, tokens := range db.data.MatchSubscriptions {
+		if len(tokens) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // ---------------------------------------------------------
 // FCM Push Token Storage
 // ---------------------------------------------------------

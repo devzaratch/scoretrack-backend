@@ -376,7 +376,12 @@ func startLiveTicker() {
 		// นับ client จริงจาก Hub (ตัวแปร wsClients เดิมไม่เคยถูกเติมค่า
 		// ทำให้ ticker ข้ามทุกครั้ง -> หน้าแรกไม่เคยได้คะแนนสดอัตโนมัติ)
 		clientCount := GlobalLiveHub.ClientCount()
-		if clientCount == 0 {
+
+		// ไม่มีคนดูเว็บ AND ไม่มีแมตช์ไหนถูก subscribe push -> ข้ามรอบนี้ (ไม่กินโควตา)
+		// แต่ถ้ามีคนกด 🔔 subscribe แมตช์ใดไว้ -> ต้องทำงานต่อแม้ไม่มีคนเปิดเว็บ
+		// ไม่งั้น push เริ่มแข่ง/ประตู/จบเกม ไม่มีทางถึงมือคนที่รอ
+		hasSubs := GlobalDB != nil && GlobalDB.HasAnyMatchSubscriptions()
+		if clientCount == 0 && !hasSubs {
 			continue
 		}
 
@@ -425,6 +430,11 @@ func startLiveTicker() {
 
 		// 3. Non-blocking Broadcast Live Updates via LiveHub
 		GlobalLiveHub.BroadcastJSON(liveUpdates)
+
+		// 4. prune สถานะแมตช์เก่า (จบ/หายไปเกิน 2 ชม.) กัน memory leak
+		if removed := GlobalGoalDetector.pruneOlderThan(2 * time.Hour); removed > 0 {
+			log.Printf("🧹 goal detector: prune %d match states เก่าแล้ว", removed)
+		}
 	}
 }
 
