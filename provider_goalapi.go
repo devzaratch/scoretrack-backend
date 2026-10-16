@@ -244,11 +244,14 @@ func goalErrorCode(body []byte) string {
 	return ""
 }
 
+// truncateRunes ตัดข้อความให้ไม่เกิน n rune — ตัดที่ boundary ของ rune
+// (เดิมตัดเป็น byte ซึ่งตัดกลางอักขระ UTF-8/ไทย ได้ ทำให้ output เพี้ยน)
 func truncateRunes(s string, n int) string {
-	if len(s) <= n {
+	runes := []rune(s)
+	if len(runes) <= n {
 		return s
 	}
-	return s[:n] + "..."
+	return string(runes[:n]) + "..."
 }
 
 // ---------------------------------------------------------------------------
