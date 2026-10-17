@@ -89,6 +89,13 @@ func InitDB() *PersistentDB {
 	// กู้ข้อมูลจาก Redis ถ้า local ว่าง (Render ดิสก์ ephemeral — หายตอน restart)
 	db.restoreFromSnapshot()
 
+	// บังคับ dirty ตั้งแต่ boot (เมื่อมี Redis) — syncWorker จะ flush + push
+	// snapshot แรกภายใน 3 วิ กันช่องว่างที่ไม่มีกิจกรรมผู้ใช้แล้วไม่เคยมี
+	// snapshot เกิดขึ้นเลย (ถ้าดิสก์หายทีหลังจะไม่มีอะไรให้กู้)
+	if rdb != nil {
+		db.dirty = true
+	}
+
 	// Start Background Async Sync Worker (Flush dirty changes to disk every 3 seconds)
 	go db.syncWorker(3 * time.Second)
 
