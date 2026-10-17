@@ -1,4 +1,4 @@
-﻿package main
+package main
 
 import (
 	"encoding/json"
@@ -25,6 +25,10 @@ type PersistentDB struct {
 	filePath string
 	mu       sync.RWMutex
 	dirty    bool
+
+	// ครั้งสุดท้ายที่ push snapshot ขึ้น Redis (throttle 60 วิ/ครั้ง)
+	// เขียนจาก syncWorker goroutine ตัวเดียว ไม่ชนกัน
+	lastSnapshot time.Time
 }
 
 var GlobalDB *PersistentDB
@@ -82,6 +86,9 @@ func InitDB() *PersistentDB {
 		}
 	}
 
+	// กู้ข้อมูลจาก Redis ถ้า local ว่าง (Render ดิสก์ ephemeral — หายตอน restart)
+	db.restoreFromSnapshot()
+
 	// Start Background Async Sync Worker (Flush dirty changes to disk every 3 seconds)
 	go db.syncWorker(3 * time.Second)
 
@@ -106,6 +113,8 @@ func (db *PersistentDB) syncWorker(interval time.Duration) {
 			if err := os.WriteFile(tmpPath, jsonData, 0644); err == nil {
 				os.Rename(tmpPath, db.filePath)
 				db.dirty = false
+				// สำรอง snapshot ขึ้น Redis (best-effort, throttle ในตัว)
+				db.maybePushSnapshot(jsonData)
 			}
 		}
 		db.mu.Unlock()
