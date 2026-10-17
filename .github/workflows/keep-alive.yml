@@ -1,0 +1,30 @@
+name: Keep Render Backend Awake
+
+# Render free tier หลับเมื่อไม่มี traffic ~15 นาที -> cold start 30-50 วิ
+# ping ทุก ~14 นาที = ไม่ให้หลับ + ถ้าล่มจริง (8 ครั้งไม่เคย 200) workflow ล้ม
+# -> GitHub แจ้งเมลเจ้าของ repo = uptime monitor ชั้นคร่าว ๆ ฟรีด้วย
+# หมายเหตุ: GitHub ปิด scheduled workflow เองถ้า repo ไม่มี activity 60 วัน
+# (ผลัก/merge อะไรก็ได้ทุก 2 เดือนเพื่อปลุกกลับมา)
+on:
+  schedule:
+    - cron: "*/14 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Wake backend (retries จนกว่าจะ HTTP 200)
+        run: |
+          url="https://scoretrack-backend.onrender.com/"
+          for i in $(seq 1 8); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$url" || true)
+            echo "attempt $i -> HTTP $code"
+            if [ "$code" = "200" ]; then
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::error::Backend ไม่ตอบ 200 หลัง 8 ครั้ง (ล่มจริง หรือเครือข่าย runner เข้าไม่ถึง)"
+          exit 1

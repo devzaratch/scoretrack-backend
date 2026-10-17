@@ -1,0 +1,29 @@
+name: Go CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # go.mod ระบุ go 1.25.0 — ให้ Actions อ่านเวอร์ชันจากไฟล์เอง
+          go-version-file: go.mod
+          cache: true
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: build
+        run: go build ./...
+
+      # มี integration tests บน miniredis (db_backup_redis_test.go) — ไม่ต้องใช้ Docker
+      - name: unit + integration tests
+        run: go test ./... -count=1
