@@ -1,4 +1,4 @@
-﻿package main
+package main
 
 import (
 	"bufio"
@@ -112,5 +112,6 @@ func setupAdminRoutes(rg *gin.RouterGroup) {
 		admin.GET("/predictions", handleAdminPredictions)
 		admin.GET("/client-errors", handleAdminClientErrors)
 		admin.GET("/db-size", handleAdminDBSize)
+		admin.GET("/metrics", handleAdminMetrics)
 	}
 }

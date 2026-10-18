@@ -345,6 +345,7 @@ func main() {
 
 		// Error reporting (frontend monitoring)
 		rg.POST("/client-errors", rateLimitMiddleware("error-report", RLErrorReport, time.Minute), handleClientError)
+	rg.POST("/metrics", rateLimitMiddleware("metrics", RLMetrics, time.Minute), handleMetrics)
 
 		// Admin Panel
 		setupAdminRoutes(rg)
@@ -919,6 +920,7 @@ const (
 	RLProxy         = 60    // proxy endpoints (matches/league/team/player)
 	RLNews          = 30    // news RSS
 	RLErrorReport   = 20    // client-errors — กัน log spam
+	RLMetrics       = 60    // metrics beacon (vitals+pageview)
 	RLPrediction    = 30    // predictions save
 	RLUserWrite     = 30    // favorites/fcm/subscribe writes
 )
