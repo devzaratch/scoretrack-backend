@@ -33,6 +33,56 @@ type RealTeam struct {
 	RedCards int    `json:"red_cards,omitempty"`
 }
 
+// fallbackTeamLogos — ชื่อทีมในข้อมูล fallback -> โลโก้ ESPN CDN (URL คงที่ ไม่มี
+// ลายเซ็นหมดอายุแบบ media.goal-api.com) — ใช้เติมตอน provider ไม่ตอบ/โควตาหมด
+// ถ้าไม่เติม API จะคืน logo:"" -> <img src=""> พังเป็นไอคอนหักทุกใบในทุกหน้า
+// (ทุก URL ใน map นี้ตรวจแล้วว่าตอบ 200: /api/matches fallback 2026-10-18)
+var fallbackTeamLogos = map[string]string{
+	"Manchester United":   "https://a.espncdn.com/i/teamlogos/soccer/500/360.png",
+	"Fulham":              "https://a.espncdn.com/i/teamlogos/soccer/500/370.png",
+	"Ipswich":             "https://a.espncdn.com/i/teamlogos/soccer/500/373.png",
+	"Liverpool":           "https://a.espncdn.com/i/teamlogos/soccer/500/364.png",
+	"Arsenal":             "https://a.espncdn.com/i/teamlogos/soccer/500/359.png",
+	"Wolves":              "https://a.espncdn.com/i/teamlogos/soccer/500/380.png",
+	"Everton":             "https://a.espncdn.com/i/teamlogos/soccer/500/368.png",
+	"Brighton":            "https://a.espncdn.com/i/teamlogos/soccer/500/331.png",
+	"Newcastle":           "https://a.espncdn.com/i/teamlogos/soccer/500/361.png",
+	"Southampton":         "https://a.espncdn.com/i/teamlogos/soccer/500/376.png",
+	"Valencia":            "https://a.espncdn.com/i/teamlogos/soccer/500/94.png",
+	"Barcelona":           "https://a.espncdn.com/i/teamlogos/soccer/500/83.png",
+	"Mallorca":            "https://a.espncdn.com/i/teamlogos/soccer/500/84.png",
+	"Real Madrid":         "https://a.espncdn.com/i/teamlogos/soccer/500/86.png",
+	"Villarreal":          "https://a.espncdn.com/i/teamlogos/soccer/500/102.png",
+	"Atletico Madrid":     "https://a.espncdn.com/i/teamlogos/soccer/500/1068.png",
+	"Athletic Bilbao":     "https://a.espncdn.com/i/teamlogos/soccer/500/93.png",
+	"Getafe":              "https://a.espncdn.com/i/teamlogos/soccer/500/2922.png",
+	"Wolfsburg":           "https://a.espncdn.com/i/teamlogos/soccer/500/138.png",
+	"Bayern Munich":       "https://a.espncdn.com/i/teamlogos/soccer/500/132.png",
+	"Monchengladbach":     "https://a.espncdn.com/i/teamlogos/soccer/500/268.png",
+	"Bayer Leverkusen":    "https://a.espncdn.com/i/teamlogos/soccer/500/131.png",
+	"Borussia Dortmund":   "https://a.espncdn.com/i/teamlogos/soccer/500/124.png",
+	"Eintracht Frankfurt": "https://a.espncdn.com/i/teamlogos/soccer/500/125.png",
+	"Genoa":               "https://a.espncdn.com/i/teamlogos/soccer/500/3263.png",
+	"Inter":               "https://a.espncdn.com/i/teamlogos/soccer/500/110.png",
+	"Juventus":            "https://a.espncdn.com/i/teamlogos/soccer/500/111.png",
+	"Como":                "https://a.espncdn.com/i/teamlogos/soccer/500/2572.png",
+	"Milan":               "https://a.espncdn.com/i/teamlogos/soccer/500/103.png",
+	"Torino":              "https://a.espncdn.com/i/teamlogos/soccer/500/239.png",
+}
+
+// fillTeamLogos — เติมโลโก้ที่ว่างเปล่าจาก fallbackTeamLogos (แมตช์จาก TSDB
+// badge หมดอายุก็โดนเติมด้วย)
+func fillTeamLogos(matches []RealMatch) {
+	for i := range matches {
+		if matches[i].HomeTeam.Logo == "" {
+			matches[i].HomeTeam.Logo = fallbackTeamLogos[matches[i].HomeTeam.Name]
+		}
+		if matches[i].AwayTeam.Logo == "" {
+			matches[i].AwayTeam.Logo = fallbackTeamLogos[matches[i].AwayTeam.Name]
+		}
+	}
+}
+
 // Standings calculation struct
 type CalculatedStanding struct {
 	Rank      int    `json:"rank"`
@@ -323,6 +373,7 @@ func getTSDBMatchesJSON(dateParam string) []byte {
 		}
 	}
 
+	fillTeamLogos(matches)
 	bytes, _ := json.Marshal(matches)
 	return bytes
 }
