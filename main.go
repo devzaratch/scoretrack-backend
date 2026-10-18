@@ -1,4 +1,4 @@
-﻿package main
+package main
 
 import (
 	"context"
@@ -866,11 +866,25 @@ func handleClientError(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "logged"})
 }
 
+// rateLimitScale — ตัวคูณโควตา rate limit ทุกตัว: E2E/CI ยิงจาก IP เดียวหลาย
+// browser พร้อมกัน เกินโควตาปกติ (120/min global + per-route) จน SSR โดน 429
+// เป็นบางรอบ — ตั้ง RATE_LIMIT_SCALE=1000 เฉพาะตอนรัน test เท่านั้น
+var rateLimitScale = func() int {
+	v := strings.TrimSpace(os.Getenv("RATE_LIMIT_SCALE"))
+	if v == "" {
+		return 1
+	}
+	if n, err := strconv.Atoi(v); err == nil && n > 0 {
+		return n
+	}
+	return 1
+}()
+
 // Rate Limiter Middleware (120 reqs/min per IP — global safety net)
 func rateLimiterMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ip := c.ClientIP()
-		if !GlobalRateLimiter.Allow(ip, 120, time.Minute) {
+		if !GlobalRateLimiter.Allow(ip, 120*rateLimitScale, time.Minute) {
 			c.JSON(http.StatusTooManyRequests, gin.H{
 				"error": "คำขอมากเกินไป กรุณารอ 1 นาทีก่อนลองใหม่",
 			})
@@ -886,7 +900,7 @@ func rateLimiterMiddleware() gin.HandlerFunc {
 func rateLimitMiddleware(route string, limit int, window time.Duration) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		key := c.ClientIP() + "|" + route
-		if !GlobalRateLimiter.AllowKey(key, limit, window) {
+		if !GlobalRateLimiter.AllowKey(key, limit*rateLimitScale, window) {
 			c.Header("Retry-After", fmt.Sprintf("%d", int(window.Seconds())))
 			c.JSON(http.StatusTooManyRequests, gin.H{
 				"error": fmt.Sprintf("คำขอมากเกินไปสำหรับ %s กรุณารอ %v ก่อนลองใหม่", route, window),
