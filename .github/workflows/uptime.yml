@@ -1,0 +1,111 @@
+name: Uptime Monitor
+
+# อัปเกรดจาก keep-alive.yml เดิม (ลบไปแล้ว — ฟังก์ชันปลุก Render ยังอยู่ครบใน
+# ขั้น "เช็ค" นี้) นอกจากไม่ให้ Render หลับแล้ว ยัง:
+# - เช็ค 3 จุด: backend root / web หน้าแรก (SSR ผ่าน proxy) / API ผ่าน web proxy
+#   (ตัวหลังคือการยืนยัน prod จริงว่า proxy chain ทำงาน — คลิกแทน ข้อ 6 ได้ระดับหนึ่ง)
+# - สรุปสถานะ + เวลาตอบทุกรอบใน Actions job summary (เก็บเป็น history ใน Actions)
+# - ล่มจริง (retry ครบยังไม่ 200) -> เปิด GitHub issue อัตโนมัติ (label: uptime)
+#   ตอนกลับมาออนไลน์ -> ปิด issue พร้อม comment = มีบันทึกถาวรใน Issues tab
+# - Retry 5 ครั้ง ห่าง 20 วิ กัน false alarm จาก Render cold start (~30-50 วิ)
+#
+# หมายเหตุ: GitHub ปิด scheduled workflow เองถ้า repo ไม่มี activity 60 วัน
+# (ผลัก/merge อะไรก็ได้ทุก 2 เดือนเพื่อปลุกกลับมา)
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: uptime
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: เช็คทั้ง 3 จุด + จัดการ issue อัตโนมัติ
+        run: |
+          set -u
+          BACKEND="https://scoretrack-backend.onrender.com"
+          WEB="https://livescore-web-tau.vercel.app"
+
+          declare -A CODE TIME OK
+
+          # check <name> <url> [body_pattern] — retry สูงสุด 5 ครั้ง ห่าง 20 วิ
+          check() {
+            local name="$1" url="$2" pattern="${3:-}" i out code time
+            for i in 1 2 3 4 5; do
+              out=$(curl -s -o /tmp/body -w "%{http_code} %{time_total}" --max-time 40 "$url" || true)
+              code=${out%% *}
+              time=${out##* }
+              if [ "$code" = "200" ] && { [ -z "$pattern" ] || grep -q "$pattern" /tmp/body; }; then
+                OK["$name"]=1; CODE["$name"]="$code"; TIME["$name"]="$time"
+                echo "$name: online (ครั้งที่ $i, ${time} วิ)"
+                return
+              fi
+              echo "$name: ครั้งที่ $i -> HTTP $code"
+              [ $i -lt 5 ] && sleep 20
+            done
+            OK["$name"]=0; CODE["$name"]="$code"; TIME["$name"]="$time"
+          }
+
+          check backend "$BACKEND/" '"status"'
+          check web "$WEB/"
+          check web-api "$WEB/api/matches"
+
+          # สรุปใน job summary (เห็นเป็นตารางทุกรอบในหน้า Actions)
+          {
+            echo "## ⏱️ Uptime — $(date -u '+%Y-%m-%d %H:%M UTC')"
+            echo ""
+            echo "| จุดที่เช็ค | สถานะ | HTTP | เวลาตอบ |"
+            echo "|---|---|---|---|"
+            for n in backend web web-api; do
+              if [ "${OK[$n]}" = "1" ]; then st="🟢 online"; else st="🔴 DOWN"; fi
+              echo "| \`$n\` | $st | ${CODE[$n]} | ${TIME[$n]} วิ |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          failed=""
+          for n in backend web web-api; do
+            [ "${OK[$n]}" = "1" ] || failed="$failed $n"
+          done
+
+          gh label create uptime --color d73a4a \
+            --description "เปิด/ปิดอัตโนมัติโดย Uptime Monitor workflow" 2>/dev/null || true
+
+          if [ -n "$failed" ]; then
+            for n in $failed; do
+              # เปิด issue เฉพาะจุดที่ยังไม่มี issue เปิดอยู่ (กัน spam ทุก 10 นาที)
+              open=$(gh issue list --label uptime --state open --json title --jq \
+                '[.[] | select(.title | contains("[uptime] '"$n"' "))] | length' || echo 0)
+              if [ "$open" = "0" ]; then
+                gh issue create --label uptime --title "🔴 [uptime] $n ไม่ตอบ" \
+                  --body "การเช็คอัตโนมัติจาก GitHub Actions พบว่า *$n* ไม่ตอบ HTTP 200 (retry ครบ 5 ครั้ง)
+
+                  รายละเอียดรอบนี้: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+
+                  _-issue นี้จะถูกปิดอัตโนมัติเมื่อ $n กลับมาออนไลน์_" || true
+              fi
+            done
+            echo "::error::จุดที่ล่ม:$failed"
+            exit 1
+          fi
+
+          # ทุกจุด online -> ปิด issue ที่ค้างอยู่ของจุดที่กลับมา (ถ้ามี)
+          for n in backend web web-api; do
+            ids=$(gh issue list --label uptime --state open --json title,number --jq \
+              '.[] | select(.title | contains("[uptime] '"$n"' ")) | .number' || true)
+            for id in $ids; do
+              gh issue close "$id" --comment "✅ $n กลับมาออนไลน์แล้ว (รอบปิด: $GITHUB_RUN_ID)" || true
+            done
+          done
