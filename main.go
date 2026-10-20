@@ -950,7 +950,11 @@ func handleSourcesStatus(c *gin.Context) {
 		"providers":       snapshotProviders(),
 		"goal_ws":         goalWS,
 		"registry":        registry.Counts(),
-		"generated_at":    time.Now().Format(time.RFC3339),
+		"live_ws": gin.H{
+			"clients":           GlobalLiveHub.ClientCount(),
+			"dropped_broadcast": GlobalLiveHub.DroppedBroadcasts(),
+		},
+		"generated_at": time.Now().Format(time.RFC3339),
 	})
 }
 

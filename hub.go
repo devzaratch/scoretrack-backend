@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -91,6 +92,8 @@ type LiveHub struct {
 	register   chan *LiveClient
 	unregister chan *LiveClient
 	mu         sync.RWMutex
+	// สถิติ message ที่ถูกทิ้งเพราะคิวเต็ม/ลูกค้าช้า — เอามดูใน /api/_sources
+	droppedBroadcasts atomic.Int64
 }
 
 func NewLiveHub() *LiveHub {
@@ -119,16 +122,22 @@ func (h *LiveHub) Run() {
 			h.mu.Unlock()
 			log.Printf("Live Client disconnected (Total active: %d)", h.ClientCount())
 		case message := <-h.broadcast:
-			h.mu.RLock()
+			// Lock (ไม่ใช่ RLock): บล็อกนี้ delete ออกจาก map —
+			// เดิมถือ RLock แล้วเขียน map ชนกับ ClientCount() ที่ถือ RLock พร้อมกัน
+			// = concurrent map read/write (data race จริง — รัน `go test -race` จะ fail/panic)
+			h.mu.Lock()
 			for client := range h.clients {
 				select {
 				case client.send <- message:
 				default:
+					// ลูกค้าช้าเกิน (send เต็ม 256) → ตัดทิ้ง policy เดิมคงไว้
+					// close ก่อน delete + ทุกอย่างอยู่ใต้ lock เดียวกัน
+					// → unregister สายตามจะเห็นว่าไม่อยู่ใน map แล้ว ไม่ double-close
 					close(client.send)
 					delete(h.clients, client)
 				}
 			}
-			h.mu.RUnlock()
+			h.mu.Unlock()
 		}
 	}
 }
@@ -144,8 +153,20 @@ func (h *LiveHub) BroadcastJSON(v interface{}) error {
 	if err != nil {
 		return err
 	}
-	h.broadcast <- data
+	// Non-blocking: ห้าม block caller เด็ดขาด — จุดเรียกหลักคือ live ticker
+	// (main.go) และ goal detector goroutine ถ้า chan (1024) เต็มแล้ว blocking
+	// = ticker ทั้งตัวค้าง (sweep/prune หยุดตาม) → ระบบ live หยุดทั้งเป็นชุด
+	select {
+	case h.broadcast <- data:
+	default:
+		h.droppedBroadcasts.Add(1)
+	}
 	return nil
+}
+
+// DroppedBroadcasts — จำนวน message ที่ถูกทิ้งเพราะคิวเต็ม (export ให้ /api/_sources)
+func (h *LiveHub) DroppedBroadcasts() int64 {
+	return h.droppedBroadcasts.Load()
 }
 
 // Global Hub Instances

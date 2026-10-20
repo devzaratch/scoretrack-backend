@@ -25,5 +25,6 @@ jobs:
         run: go build ./...
 
       # มี integration tests บน miniredis (db_backup_redis_test.go) — ไม่ต้องใช้ Docker
-      - name: unit + integration tests
-        run: go test ./... -count=1
+      # -race = จับ data race เช่น hub map delete ขณะถือ RLock (regression hub_race_test.go) — Ubuntu มี gcc ครบ
+      - name: unit + integration tests (with race detector)
+        run: go test ./... -count=1 -race
