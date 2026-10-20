@@ -445,12 +445,15 @@ func startLiveTicker() {
 		// ทำให้ ticker ข้ามทุกครั้ง -> หน้าแรกไม่เคยได้คะแนนสดอัตโนมัติ)
 		clientCount := GlobalLiveHub.ClientCount()
 
-		// ไม่มีคนดูเว็บ AND ไม่มีแมตช์ไหนถูก subscribe push -> ข้ามรอบนี้ (ไม่กินโควตา)
-		// แต่ถ้ามีคนกด 🔔 subscribe แมตช์ใดไว้ -> ต้องทำงานต่อแม้ไม่มีคนเปิดเว็บ
-		// ไม่งั้น push เริ่มแข่ง/ประตู/จบเกม ไม่มีทางถึงมือคนที่รอ
+		// active = มีคนดูอยู่ หรือมีคนกด 🔔 subscribe แมตช์ใดไว้
 		hasSubs := GlobalDB != nil && GlobalDB.HasAnyMatchSubscriptions()
-		if clientCount == 0 && !hasSubs {
-			continue
+		active := clientCount > 0 || hasSubs
+
+		// prune สถานะแมตช์เก่า (จบ/หายไปเกิน 2 ชม.) — ทำทุกรอบ ไม่ขึ้นกับคนดู
+		// regression เดิม: อยู่หลัง gate "ไม่มีคนดู -> continue" -> state เก่าค้าง
+		// memory leak ถาวรตอนไม่มีใครเปิดเว็บ prune ฟรี = ไม่ยิง upstream
+		if removed := GlobalGoalDetector.pruneOlderThan(2 * time.Hour); removed > 0 {
+			log.Printf("🧹 goal detector: prune %d match states เก่าแล้ว", removed)
 		}
 
 		// เลือกแหล่ง live ตัวแรกที่ยังใช้ได้ (GOAL ก่อน ตัวสำรอง API-Football ทีหลัง)
@@ -462,7 +465,15 @@ func startLiveTicker() {
 		// 1. REST sweep ตามรอบของ provider แต่ละตัว
 		//    (GOAL = 180 วิ เพราะมี WebSocket push ช่วย realtime / API-Football = 60 วิ
 		//     เพราะไม่มี push ต้องพึ่ง sweep อย่างเดียว — ทุกการ sweep = 1 call เท่านั้น)
-		if time.Since(lastREST) >= src.SweepInterval() {
+		//
+		// regression "deadlock เชิงพฤติกรรม" เดิม: ไม่มีคนดู -> continue ข้าม sweep เลย
+		// -> liveState ว่าง -> goal WS subscribe 0 คู่ -> subscriptions=0 ถาวร
+		// -> ระบบ live ไม่ตื่นเองจนกว่าจะมีคนเปิดหน้าแรก (health log เคยโชว์ rest_swept=false)
+		// ตอนนี้: ไม่มีคนดู -> ช้าลงเป็น IDLE_SWEEP_SEC (default 15 นาที) ยังคงวนอยู่
+		// ระบบรู้ตัวเองว่ามีบอล live -> WS subscribe เอง -> พร้อมทันทีที่คนเปิดเว็บ/กด 🔔
+		// (96 calls/วัน ตอน idle vs 480 ถ้า sweep เร็วตลอด — ยังกันโควตาได้)
+		sweepInterval := liveSweepInterval(src.SweepInterval(), active)
+		if time.Since(lastREST) >= sweepInterval {
 			if err := src.LiveSweep(); err == nil {
 				lastREST = time.Now()
 			}
@@ -496,14 +507,24 @@ func startLiveTicker() {
 			}
 		}
 
-		// 3. Non-blocking Broadcast Live Updates via LiveHub
+		// 4. Non-blocking Broadcast Live Updates via LiveHub
 		GlobalLiveHub.BroadcastJSON(liveUpdates)
-
-		// 4. prune สถานะแมตช์เก่า (จบ/หายไปเกิน 2 ชม.) กัน memory leak
-		if removed := GlobalGoalDetector.pruneOlderThan(2 * time.Hour); removed > 0 {
-			log.Printf("🧹 goal detector: prune %d match states เก่าแล้ว", removed)
-		}
 	}
+}
+
+// liveSweepInterval เลือกความถี่ sweep: มีคนดู/มี sub -> รอบปกติ (เร็ว)
+// ไม่มีใครเลย -> ช้าลง (IDLE_SWEEP_SEC) เพื่อให้ระบบยัง "ตื่น" อยู่เอง
+// (liveState มีข้อมูล -> goal WS subscribe เองได้ ไม่ต้องรอคนเปิดหน้าแรก)
+// โดยไม่กินโควตาเต็มอัตราตอนไม่มีใครใช้งาน
+func liveSweepInterval(base time.Duration, active bool) time.Duration {
+	if active {
+		return base
+	}
+	idle := time.Duration(envInt("IDLE_SWEEP_SEC", 900)) * time.Second
+	if idle < base {
+		return base
+	}
+	return idle
 }
 
 var (
