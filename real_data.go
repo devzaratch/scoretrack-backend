@@ -457,84 +457,11 @@ func getTSDBMatchDetailsJSON(matchID string) []byte {
 		}
 	}
 
-	// Fallback to real match details format
-	details := map[string]interface{}{
-		"general": map[string]interface{}{
-			"matchId":    matchID,
-			"leagueName": "Premier League",
-			"leagueId":   47,
-			"country":    "England",
-			"stadium":    "Emirates Stadium",
-		},
-		"header": map[string]interface{}{
-			"teams": []map[string]interface{}{
-				{"id": 9825, "name": "Arsenal", "score": 2, "imageUrl": "https://r2.thesportsdb.com/images/media/team/badge/uyhbfe1612467038.png"},
-				{"id": 8455, "name": "Chelsea", "score": 1, "imageUrl": "https://r2.thesportsdb.com/images/media/team/badge/yvwvtu1448813215.png"},
-			},
-			"status": map[string]interface{}{"finished": true, "started": true, "scoreStr": "2 - 1", "liveTime": "FT"},
-		},
-		"content": map[string]interface{}{
-			"lineup": map[string]interface{}{
-				"homeTeam": map[string]interface{}{
-					"id":        9825,
-					"name":      "Arsenal",
-					"formation": "4-3-3",
-					"starters": []map[string]interface{}{
-						{"id": 1, "name": "David Raya", "shirtNumber": "22"},
-						{"id": 2, "name": "Ben White", "shirtNumber": "4"},
-						{"id": 3, "name": "William Saliba", "shirtNumber": "2"},
-						{"id": 4, "name": "Gabriel Magalhães", "shirtNumber": "6"},
-						{"id": 5, "name": "Jurrien Timber", "shirtNumber": "12"},
-						{"id": 6, "name": "Declan Rice", "shirtNumber": "41"},
-						{"id": 7, "name": "Thomas Partey", "shirtNumber": "5"},
-						{"id": 8, "name": "Martin Ødegaard", "shirtNumber": "8"},
-						{"id": 9, "name": "Bukayo Saka", "shirtNumber": "7"},
-						{"id": 10, "name": "Kai Havertz", "shirtNumber": "29"},
-						{"id": 11, "name": "Gabriel Martinelli", "shirtNumber": "11"},
-					},
-				},
-				"awayTeam": map[string]interface{}{
-					"id":        8455,
-					"name":      "Chelsea",
-					"formation": "4-2-3-1",
-					"starters": []map[string]interface{}{
-						{"id": 12, "name": "Robert Sánchez", "shirtNumber": "1"},
-						{"id": 13, "name": "Malo Gusto", "shirtNumber": "27"},
-						{"id": 14, "name": "Wesley Fofana", "shirtNumber": "29"},
-						{"id": 15, "name": "Levi Colwill", "shirtNumber": "6"},
-						{"id": 16, "name": "Marc Cucurella", "shirtNumber": "3"},
-						{"id": 17, "name": "Moisés Caicedo", "shirtNumber": "25"},
-						{"id": 18, "name": "Roméo Lavia", "shirtNumber": "45"},
-						{"id": 19, "name": "Noni Madueke", "shirtNumber": "11"},
-						{"id": 20, "name": "Cole Palmer", "shirtNumber": "20"},
-						{"id": 21, "name": "Pedro Neto", "shirtNumber": "7"},
-						{"id": 22, "name": "Nicolas Jackson", "shirtNumber": "15"},
-					},
-				},
-			},
-			"h2h": map[string]interface{}{
-				"matches": []map[string]interface{}{
-					{"date": "2024-04-23", "time": "2024-04-23", "home": map[string]interface{}{"name": "Arsenal", "score": 5}, "away": map[string]interface{}{"name": "Chelsea", "score": 0}},
-					{"date": "2023-10-21", "time": "2023-10-21", "home": map[string]interface{}{"name": "Chelsea", "score": 2}, "away": map[string]interface{}{"name": "Arsenal", "score": 2}},
-					{"date": "2023-05-02", "time": "2023-05-02", "home": map[string]interface{}{"name": "Arsenal", "score": 3}, "away": map[string]interface{}{"name": "Chelsea", "score": 1}},
-					{"date": "2022-11-06", "time": "2022-11-06", "home": map[string]interface{}{"name": "Chelsea", "score": 0}, "away": map[string]interface{}{"name": "Arsenal", "score": 1}},
-				},
-			},
-			"stats": map[string]interface{}{
-				"Periods": map[string]interface{}{
-					"All": map[string]interface{}{
-						"stats": []map[string]interface{}{
-							{"title": "Possession", "stats": []interface{}{"56%", "44%"}},
-							{"title": "Total Shots", "stats": []interface{}{15, 9}},
-							{"title": "Shots on Target", "stats": []interface{}{6, 4}},
-						},
-					},
-				},
-			},
-		},
-	}
-	b, _ := json.Marshal(details)
-	return b
+	// ไม่มีข้อมูลจริงจากทุกแหล่ง (FotMob/Provider/TSDB) -> คืน nil
+	// เดิม hardcode "Arsenal 2-1 Chelsea" ทุก id ที่หาไม่เจอ = โชว์แมตช์ปลอมให้ผู้ใช้
+	// (โดยเฉพาะตอน Provider ล่ม — แมตช์ id จริงก็ได้แต่ของปลอมซ้ำทุกครั้ง)
+	// ตอนนี้ให้ handleProxy ตอบ 404 จริงแทน (หน้าเว็บเรียก notFound() -> not-found.tsx)
+	return nil
 }
 
 func getTSDBLeagueJSON(leagueID string) []byte {
@@ -1217,11 +1144,9 @@ func getTSDBTeamJSON(teamID string) []byte {
 		}
 	}
 
-	data := map[string]interface{}{
-		"details": map[string]interface{}{"id": teamID, "name": "Arsenal FC", "country": "England"},
-	}
-	b, _ := json.Marshal(data)
-	return b
+	// หาทีมไม่เจอทั้งจาก TSDB -> คืน nil ให้ handleProxy ตอบ 404 จริง
+	// เดิม hardcode "Arsenal FC" ทุก id ที่หาไม่เจอ = หน้าสโมสรปลอม (ตามรอย match details)
+	return nil
 }
 
 func getTSDBPlayerJSON(playerID string) []byte {
@@ -1264,12 +1189,9 @@ func getTSDBPlayerJSON(playerID string) []byte {
 		}
 	}
 
-	data := map[string]interface{}{
-		"id": playerID, "name": "Bukayo Saka",
-		"primaryTeam": map[string]interface{}{"teamId": 133604, "teamName": "Arsenal"},
-	}
-	b, _ := json.Marshal(data)
-	return b
+	// หาผู้เล่นไม่เจอ -> คืน nil ให้ handleProxy ตอบ 404 จริง
+	// เดิม hardcode "Bukayo Saka" ทุก id ที่หาไม่เจอ = หน้านักเตะปลอม (ตามรอย match details)
+	return nil
 }
 
 func ResolveDataType(cacheKeyPattern string) string {

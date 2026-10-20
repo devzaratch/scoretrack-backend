@@ -1301,6 +1301,14 @@ func handleProxy(cacheKeyPattern string, ttl time.Duration, targetURLBuilder fun
 
 		dataType = ResolveDataType(cacheKeyPattern)
 		realData := GetRealData(dataType, paramOrQuery)
+		// ทุกแหล่งล้ม + ไม่มีข้อมูลสำรองจริง -> ตอบ 404 จริงสำหรับหน้า detail
+		// ให้หน้าเว็บเรียก notFound() ได้ (HTTP 404 จริง + noindex + not-found.tsx)
+		// เดิมตอบ 200 ร่างเปล่า (JSON.parse หน้าเว็บพัง) หรือ 200 + ข้อมูลปลอม
+		if shouldNotFound(dataType, realData) {
+			log.Printf("ℹ️ 404 %s %s: ทุกแหล่งข้อมูลล้มและไม่มีข้อมูลสำรองจริง", dataType, paramOrQuery)
+			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+			return
+		}
 		if len(realData) > 0 {
 			// ข้อมูล hardcode ฤดูกาลเก่า -> cache สั้น 3 นาที (เหตุผลเดียวกับบล็อกด้านบน)
 			realTTL := ttl
@@ -1417,13 +1425,37 @@ func fetchFromFotmob(targetURL string) ([]byte, error) {
 	return body, nil
 }
 
+// looksLikeMatchDetails — ยืนยันว่า payload เป็น matchDetails จริง (มี header/general/content)
+// RapidAPI/Proxy บางตัวตอบ JSON error ด้วย HTTP 200 สำหรับแมตช์ที่ไม่มีอยู่จริง
+// ถ้าผ่านเฉย ๆ จะได้ 200 + payload เปล่า -> หน้าเว็บโชว์ Home/Away ปลอม แทน 404 จริง
+func looksLikeMatchDetails(m map[string]interface{}) bool {
+	if m == nil {
+		return false
+	}
+	if _, hasHeader := m["header"]; hasHeader {
+		return true
+	}
+	return m["general"] != nil || m["content"] != nil
+}
+
+// shouldNotFound — เมื่อทุกแหล่งข้อมูลล้มและไม่มีข้อมูลสำรองจริง:
+// หน้า detail (match/team/player) ตอบ 404 จริงให้หน้าเว็บเรียก notFound() ได้
+// ส่วนรายการ/ลีก (matches ตามวันที่, league, ...) คง 200 เสมอ —
+// วันไม่มีบอล = ว่างเปล่า ไม่ใช่ 404
+func shouldNotFound(dataType string, realData []byte) bool {
+	if len(realData) > 0 {
+		return false
+	}
+	return dataType == "match" || dataType == "team" || dataType == "player"
+}
+
 func fetchCompleteMatchDetails(matchID string) ([]byte, error) {
 	// 1. Try Direct Single Request first (0 RapidAPI quota used)
 	directURL := fmt.Sprintf("https://www.fotmob.com/api/matchDetails?matchId=%s", matchID)
 	if data, err := fetchFromFotmob(directURL); err == nil && len(data) > 0 {
 		var testMap map[string]interface{}
 		if errJson := json.Unmarshal(data, &testMap); errJson == nil {
-			if _, hasHeader := testMap["header"]; hasHeader || testMap["general"] != nil || testMap["content"] != nil {
+			if looksLikeMatchDetails(testMap) {
 				return data, nil
 			}
 		}
@@ -1493,6 +1525,13 @@ func fetchCompleteMatchDetails(matchID string) ([]byte, error) {
 	var baseMap map[string]interface{}
 	if err := json.Unmarshal(detailsRaw, &baseMap); err != nil {
 		return nil, err
+	}
+
+	// ยืนยันว่าเป็น matchDetails จริง (มี header/general/content)
+	// — RapidAPI/Proxy บางตัวตอบ JSON error ด้วย HTTP 200 สำหรับแมตช์ที่ไม่มีจริง
+	// ถ้าผ่านเฉย ๆ จะได้ 200 + payload เปล่า -> หน้าเว็บโชว์ Home/Away ปลอมแทน 404
+	if !looksLikeMatchDetails(baseMap) {
+		return nil, fmt.Errorf("match details จาก sub-request ไม่มี header/general/content (matchId=%s ไม่มีอยู่จริงหรือ upstream ตอบ error)", matchID)
 	}
 
 	contentMap := make(map[string]interface{})
