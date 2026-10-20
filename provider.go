@@ -548,6 +548,10 @@ func initProviders() {
 	if g := goalProvider(); g != nil {
 		g.StartLiveStream()
 	}
+
+	// backfill นักเตะเข้า registry จาก squad ของทีมที่รู้จัก (registry ค้าง 144 ตัว)
+	// ดูรายละเอียด/kill switch ใน phase1c_backfill.go (PLAYER_BACKFILL=off)
+	startPlayerBackfill()
 }
 
 // liveSource คือ provider ที่เก็บสถานะ live ไว้ในหน่วยความจำ

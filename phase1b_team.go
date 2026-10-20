@@ -369,6 +369,12 @@ func (p *GoalProvider) teamSquadJSON(ulid, teamID string) ([]byte, error) {
 	}
 
 	for _, pl := range resp.Data {
+		// เติม registry จากข้อมูลที่ยิงมาแล้วฟรี ๆ (APIID+ULID มาพร้อมกัน)
+		// regression: เดิม remember แค่ตอนคนค้นหา/กด top scorer -> registry นักเตะ
+		// ค้างที่ 144 ตัว -> /player/{apiId} resolve ไม่ได้ = หน้านักเตะพังเงียบ
+		if pl.APIID != "" && pl.ID != "" {
+			registry.Remember("player", pl.APIID, p.Name(), pl.ID)
+		}
 		key := squadGroupTitle(pl.Type)
 		m := map[string]interface{}{
 			"id":   pl.ID,

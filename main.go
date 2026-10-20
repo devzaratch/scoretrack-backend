@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/tls"
@@ -1148,52 +1149,78 @@ func handleProxy(cacheKeyPattern string, ttl time.Duration, targetURLBuilder fun
 		var err error
 		sourceTag := "fotmob"
 
-		if dataType == "matches" {
-			if raw, src, ok := fetchMatchesFromProviders(paramOrQuery); ok {
-				data, sourceTag = raw, src
-			} else {
-				data, err = fetchFromFotmob(targetURL)
+		// singleflight: cache-miss พร้อมกัน 20 คำขอคีย์เดียวกัน -> ยิง upstream ครั้งเดียว
+		// ที่เหลือรอแล้วใช้ผลเดียวกัน (กัน stampede ตอน cache หมดอายุพร้อมกัน
+		// -> minute-limit 60/min โดนทันที -> 429 -> circuit เปิดทั้งระบบ)
+		// หมายเหตุ: closure ไม่แตะตัวแปร c ที่เปลี่ยน state เพราะตัวรอจะใช้ผลของคำขอแรก
+		flightKey := cacheKey + "|" + c.Request.URL.RawQuery
+		data, sourceTag, err = proxyFlights.Do(flightKey, func() ([]byte, string, error) {
+			// เช็ค cache ซ้ำหลังเข้าคิว — คำขอแรกอาจเติม cache ไปแล้วระหว่างรอ
+			if cachedData, _, found := cacheGet(cacheKey); found {
+				return cachedData, "cache-recheck", nil
 			}
-		} else if dataType == "match" {
-			if raw, src, ok := fetchMatchDetailsFromProviders(paramOrQuery); ok {
-				data, sourceTag = raw, src
+
+			var d []byte
+			var e error
+			tag := "fotmob"
+
+			if dataType == "matches" {
+				if raw, src, ok := fetchMatchesFromProviders(paramOrQuery); ok {
+					d, tag = raw, src
+				} else {
+					d, e = fetchFromFotmob(targetURL)
+				}
+			} else if dataType == "match" {
+				if raw, src, ok := fetchMatchDetailsFromProviders(paramOrQuery); ok {
+					d, tag = raw, src
+				} else {
+					d, e = fetchCompleteMatchDetails(paramOrQuery)
+				}
+			} else if dataType == "team" {
+				if raw, src, ok := fetchTeamFromProviders("", paramOrQuery); ok {
+					d, tag = raw, src
+				} else {
+					d, e = fetchCompleteTeamDetails(paramOrQuery)
+				}
+			} else if dataType == "team-squad" {
+				if raw, src, ok := fetchTeamFromProviders("squad", paramOrQuery); ok {
+					d, tag = raw, src
+				} else {
+					d, e = fetchTeamSquad(paramOrQuery)
+				}
+			} else if dataType == "team-fixtures" {
+				if raw, src, ok := fetchTeamFromProviders("fixtures", paramOrQuery); ok {
+					d, tag = raw, src
+				} else {
+					d, e = fetchTeamFixtures(paramOrQuery)
+				}
+			} else if dataType == "league" {
+				kind := leagueKindFromPattern(cacheKeyPattern)
+				if raw, src, ok := fetchLeagueFromProviders(kind, paramOrQuery); ok {
+					d, tag = raw, src
+				} else {
+					d, e = fetchCompleteLeagueDetails(paramOrQuery)
+				}
+			} else if dataType == "player" {
+				// Phase 1c: หน้าโปรไฟล์นักเตะ -> GOAL ก่อน ถ้า resolve ไม่ได้/ล้ม ถอยไป FotMob เหมือนเดิม
+				if raw, src, ok := fetchPlayerFromProviders(paramOrQuery); ok {
+					d, tag = raw, src
+				} else {
+					d, e = fetchFromFotmob(targetURL)
+				}
 			} else {
-				data, err = fetchCompleteMatchDetails(paramOrQuery)
+				d, e = fetchFromFotmob(targetURL)
 			}
-		} else if dataType == "team" {
-			if raw, src, ok := fetchTeamFromProviders("", paramOrQuery); ok {
-				data, sourceTag = raw, src
-			} else {
-				data, err = fetchCompleteTeamDetails(paramOrQuery)
-			}
-		} else if dataType == "team-squad" {
-			if raw, src, ok := fetchTeamFromProviders("squad", paramOrQuery); ok {
-				data, sourceTag = raw, src
-			} else {
-				data, err = fetchTeamSquad(paramOrQuery)
-			}
-		} else if dataType == "team-fixtures" {
-			if raw, src, ok := fetchTeamFromProviders("fixtures", paramOrQuery); ok {
-				data, sourceTag = raw, src
-			} else {
-				data, err = fetchTeamFixtures(paramOrQuery)
-			}
-		} else if dataType == "league" {
-			kind := leagueKindFromPattern(cacheKeyPattern)
-			if raw, src, ok := fetchLeagueFromProviders(kind, paramOrQuery); ok {
-				data, sourceTag = raw, src
-			} else {
-				data, err = fetchCompleteLeagueDetails(paramOrQuery)
-			}
-		} else if dataType == "player" {
-			// Phase 1c: หน้าโปรไฟล์นักเตะ -> GOAL ก่อน ถ้า resolve ไม่ได้/ล้ม ถอยไป FotMob เหมือนเดิม
-			if raw, src, ok := fetchPlayerFromProviders(paramOrQuery); ok {
-				data, sourceTag = raw, src
-			} else {
-				data, err = fetchFromFotmob(targetURL)
-			}
-		} else {
-			data, err = fetchFromFotmob(targetURL)
+			return d, tag, e
+		})
+
+		// ผลจากคำขอแรกที่วิ่งอยู่ระหว่างที่เราเข้าคิว — cache มีของใหม่แล้ว
+		// ตอบ HIT ตรง ๆ ไม่ต้อง validate/transform ซ้ำ (ข้อมูลผ่านขั้นตอนพวกนี้ตอนถูก cache แล้ว)
+		if sourceTag == "cache-recheck" {
+			c.Header("X-Cache", "HIT")
+			c.Header("X-Data-Source", "singleflight")
+			c.Data(http.StatusOK, "application/json; charset=utf-8", data)
+			return
 		}
 
 		if err == nil && len(data) > 0 {
@@ -1257,6 +1284,13 @@ func handleProxy(cacheKeyPattern string, ttl time.Duration, targetURLBuilder fun
 					cacheTTL = 90 * time.Second
 				}
 			}
+			// ข้อมูลลีกที่เป็นตาราง hardcode ฤดูกาลเก่า (tableSource=hardcoded-stale)
+			// -> cache สั้น 3 นาทีเท่านั้น: ข้อมูลปีก่อนถูกเสิร์ฟเป็นปีนี้อยู่แล้ว
+			// ยิ่งค้างนานยิ่งผิดนาน — สั้นเพื่อให้ retry เจอของจริงทันทีที่ provider ฟื้น
+			if dataType == "league" && bytes.Contains(data, []byte(`"hardcoded-stale"`)) {
+				cacheTTL = 3 * time.Minute
+				log.Printf("⚠️ league %s: ตารางคะแนนเป็นข้อมูล hardcode ฤดูกาลเก่า -> cache สั้น 3 นาที ( provider จริงล่ม )", paramOrQuery)
+			}
 			cacheSet(cacheKey, data, cacheTTL)
 
 			c.Header("X-Cache", "MISS")
@@ -1268,7 +1302,13 @@ func handleProxy(cacheKeyPattern string, ttl time.Duration, targetURLBuilder fun
 		dataType = ResolveDataType(cacheKeyPattern)
 		realData := GetRealData(dataType, paramOrQuery)
 		if len(realData) > 0 {
-			cacheSet(cacheKey, realData, ttl)
+			// ข้อมูล hardcode ฤดูกาลเก่า -> cache สั้น 3 นาที (เหตุผลเดียวกับบล็อกด้านบน)
+			realTTL := ttl
+			if dataType == "league" && bytes.Contains(realData, []byte(`"hardcoded-stale"`)) {
+				realTTL = 3 * time.Minute
+				log.Printf("⚠️ league %s: Real-Data-Engine คืนตาราง hardcode ฤดูกาลเก่า -> cache สั้น 3 นาที", paramOrQuery)
+			}
+			cacheSet(cacheKey, realData, realTTL)
 		}
 
 		c.Header("X-Cache", "MISS")

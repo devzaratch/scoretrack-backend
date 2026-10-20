@@ -554,9 +554,11 @@ func getTSDBLeagueJSON(leagueID string) []byte {
 
 	// 1. ดึงตารางคะแนน 20 ทีมจริงจาก RapidAPI Free API Live Football Data
 	standingsList := fetchRapidAPILiveStandings(leagueID)
+	tableSource := "rapidapi"
 
 	// 2. Fallback ไปหา TheSportsDB หาก RapidAPI ยังไม่คืนค่า
 	if len(standingsList) < 10 {
+		tableSource = "thesportsdb"
 		url := fmt.Sprintf("https://www.thesportsdb.com/api/v1/json/3/lookuptable.php?l=%s&s=2024-2025", tsdbLeagueID)
 		body, err := fetchTSDB(url)
 		
@@ -595,7 +597,11 @@ func getTSDBLeagueJSON(leagueID string) []byte {
 	}
 
 	// 3. 🛡️ หากยังได้ทีมน้อยกว่า 10 ทีม ให้เติมสโมสรในลีกให้เต็มครบ 20 ทีม
+	//    ข้อมูลชุดนี้เป็น hardcode ฤดูกาลเก่า = ข้อมูลปลอมสำหรับปีนี้
+	//    ต้อง mark ไว้ให้ handleProxy รู้ว่าห้าม cache นาน (ค้าง 10 นาที = ข้อมูลผิด 10 นาที)
 	if len(standingsList) < 10 {
+		tableSource = "hardcoded-stale"
+		log.Printf("⚠️ standings %s: ไม่มีตารางคะแนนจริงเลย -> ใช้ตาราง hardcode ฤดูกาลเก่า (ไม่ cache นาน)", leagueID)
 		standingsList = getFull20TeamsStandings(leagueID, leagueName)
 	}
 
@@ -628,6 +634,9 @@ func getTSDBLeagueJSON(leagueID string) []byte {
 	meta := getLeagueMetadata(leagueID, leagueName)
 
 	data := map[string]interface{}{
+		// marker ให้ handleProxy เลือก TTL: "hardcoded-stale" = ตาราง hardcode ฤดูกาลเก่า
+		// -> ห้าม cache 10 นาที (ข้อมูลผิดจะค้าง); "rapidapi"/"thesportsdb" = ข้อมูลจริง cache ได้เต็มที่
+		"tableSource":        tableSource,
 		"allAvailableSeasons": []string{"2026/2027", "2025/2026", "2024/2025", "2023/2024", "2022/2023"},
 		"details": map[string]interface{}{
 			"id":                leagueID,
@@ -1097,10 +1106,16 @@ func fetchRapidAPILiveStandings(leagueID string) []CalculatedStanding {
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	res, err := client.Do(req)
-	if err != nil || res.StatusCode != 200 {
+	if err != nil {
+		// log ทุก fallback ให้เห็นใน log — เดิม return nil เงียบ ตามหาสาเหตุตารางคะแนนไม่ได้
+		log.Printf("ℹ️ standings %s: rapidapi live-football-data ล้มเหลว (network) -> ใช้ fallback ถัดไป: %v", leagueID, err)
 		return nil
 	}
 	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		log.Printf("ℹ️ standings %s: rapidapi live-football-data คืน %d -> ใช้ fallback ถัดไป", leagueID, res.StatusCode)
+		return nil
+	}
 	body, _ := io.ReadAll(res.Body)
 
 	var raw struct {
@@ -1129,6 +1144,9 @@ func fetchRapidAPILiveStandings(leagueID string) []CalculatedStanding {
 			if teamName == "" {
 				teamName = s.ShortName
 			}
+			// GF/GA จริงมาจาก scoresStr ("86:41") — เดิมใช้สูตรปลอม Wins*2+Draws
+			// ได้ค่ามั่ว (Liverpool ยิง 86 ลูก แต่สูตรคืน 25*2+9=59) -> หน้าตารางคะแนนโชว์ผิด
+			gf, ga := parseScoresStrGoals(s.ScoresStr)
 			list = append(list, CalculatedStanding{
 				Rank:      s.Idx,
 				TeamID:    s.ID,
@@ -1137,8 +1155,8 @@ func fetchRapidAPILiveStandings(leagueID string) []CalculatedStanding {
 				Wins:      s.Wins,
 				Draws:     s.Draws,
 				Losses:    s.Losses,
-				GF:        s.Wins*2 + s.Draws,
-				GA:        s.Losses*2 + s.Draws,
+				GF:        gf,
+				GA:        ga,
 				GD:        s.GoalConDiff,
 				ScoresStr: s.ScoresStr,
 				Pts:       s.Pts,
@@ -1147,7 +1165,23 @@ func fetchRapidAPILiveStandings(leagueID string) []CalculatedStanding {
 		}
 		return list
 	}
+	log.Printf("ℹ️ standings %s: rapidapi ตอบ JSON แต่ไม่มีตารางคะแนน -> ใช้ fallback ถัดไป", leagueID)
 	return nil
+}
+
+// parseScoresStrGoals ดึงประตูยิง/เสียจาก scoresStr รูปแบบ "86:41"
+// คืน (0, 0) เมื่อ format ไม่ตรง — caller ยังใช้ GD จาก GoalConDiff ต่อได้
+func parseScoresStrGoals(scoresStr string) (int, int) {
+	parts := strings.SplitN(scoresStr, ":", 2)
+	if len(parts) != 2 {
+		return 0, 0
+	}
+	gf, err1 := strconv.Atoi(strings.TrimSpace(parts[0]))
+	ga, err2 := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err1 != nil || err2 != nil {
+		return 0, 0
+	}
+	return gf, ga
 }
 
 func getTSDBTeamJSON(teamID string) []byte {
