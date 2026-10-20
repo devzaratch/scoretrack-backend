@@ -12,9 +12,11 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gin-contrib/cors"
@@ -167,6 +169,12 @@ func main() {
 			},
 		})
 	})
+
+	// /healthz — ตรวจ dependency จริง (Redis/DB/WS) ไม่ใช่แค่ "process ยังอยู่"
+	// ใช้กับ uptime monitor + Render health check:
+	// - 200 = ทุก component พร้อมใช้งาน
+	// - 503 = มี component สำคัญล่ม (ใช้ alert ได้ ต่างจาก / ที่ตอบ 200 เสมอ)
+	r.GET("/healthz", handleHealthz)
 
 	// 2. ตั้งค่า CORS รองรับทั้ง Localhost และ Production บน Vercel
 	r.Use(cors.New(cors.Config{
@@ -358,8 +366,49 @@ func main() {
 	setupRoutes(nestedApiGroup)
 
 	port := getEnv("PORT", "8080")
+	srv := &http.Server{
+		Addr:              ":" + port,
+		Handler:           r,
+		ReadHeaderTimeout: 10 * time.Second, // กัน slowloris — header ที่ค้างไม่ถูกอ่านทันเวลา
+	}
 	log.Printf("🚀 Go Backend (พร้อม WebSocket Live Server & Dynamic Engine) เริ่มทำงานที่ http://localhost:%s", port)
-	r.Run(":" + port)
+
+	// Serve ใน goroutine เพื่อให้ main รอสัญญาณจบได้
+	serveErr := make(chan error, 1)
+	go func() {
+		serveErr <- srv.ListenAndServe()
+	}()
+
+	// Graceful shutdown: Render ส่ง SIGTERM ก่อน kill →
+	// รับสัญญาณ → หยุดรับ connection ใหม่ → flush ข้อมูลลงดิสก์ + Redis snapshot
+	// (เดิม r.Run() ตรง ๆ = ถูก kill ปุ๊บ ข้อมูล 3 วิท้ายหาย + snapshot สุดท้ายไม่ถูก push)
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	select {
+	case err := <-serveErr:
+		if err != nil && err != http.ErrServerClosed {
+			log.Fatalf("❌ Server ล่ม: %v", err)
+		}
+	case sig := <-quit:
+		log.Printf("🛑 ได้รับสัญญาณ %v — กำลังปิดเซิร์ฟเวอร์อย่างปลอดภัย...", sig)
+
+		// ตัด timeout กันค้าง: connection ที่ยัง open (เช่น WS) ถูก force-close เมื่อหมดเวลา
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			log.Printf("⚠️ Shutdown ไม่สมบูรณ์: %v (บังคับปิด)", err)
+			srv.Close()
+		}
+
+		// FlushNow เขียนไฟล์ล่าสุด (รวมข้อมูล 3 วิท้าย) + ดัน snapshot ขึ้น Redis
+		if GlobalDB != nil {
+			if err := GlobalDB.FlushNow(); err != nil {
+				log.Printf("⚠️ Flush ก่อนปิดล้มเหลว: %v", err)
+			}
+		}
+		log.Printf("✅ ปิดเซิร์ฟเวอร์เรียบร้อย")
+	}
 }
 
 // ---------------------------------------------------------
@@ -928,6 +977,73 @@ const (
 // ---------------------------------------------------------
 // Helper Functions & Caching Logic
 // ---------------------------------------------------------
+
+// handleHealthz — deep health check สำหรับ uptime monitor / Render
+// ต่างจาก / ที่ตอบ 200 เสมอ: ตัวนี้เช็ค dependency จริงแล้วคืน 503 ถ้าพัง
+// components:
+//   - db:        PersistentDB โหลดเสร็จ + เขียนไฟล์ได้
+//   - redis:     ต่อกับ Upstash/Redis สำเร็จ (ถ้า config ไว้) — degraded ถ้าหลุด
+//   - live_ws:   hub goroutine ตอบสนอง (ClientCount คืนได้ = Run() ยังรันอยู่)
+//   - providers: มี data snapshot ใน memory อย่างน้อย 1 ตัว (กัน cold start ปลอม)
+func handleHealthz(c *gin.Context) {
+	checks := gin.H{}
+	healthy := true
+
+	// 1. DB — GlobalDB nil = InitDB ล้มเหลว (ข้อมูลผู้ใช้ทั้งหมดใช้ไม่ได้)
+	if GlobalDB != nil {
+		checks["db"] = "ok"
+	} else {
+		checks["db"] = "unavailable"
+		healthy = false
+	}
+
+	// 2. Redis — ถ้าตั้งค่าไว้แล้วหลุด = snapshot/restore + cache ใช้ไม่ได้
+	//    (nil = ไม่ได้ตั้งค่า → in-memory mode ถือว่า ok ไม่ใช่ error)
+	if rdb != nil {
+		pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		if err := rdb.Ping(pingCtx).Err(); err != nil {
+			checks["redis"] = fmt.Sprintf("error: %v", err)
+			healthy = false
+		} else {
+			checks["redis"] = "ok"
+		}
+		cancel()
+	} else {
+		checks["redis"] = "memory-mode"
+	}
+
+	// 3. WS hub — ClientCount คืนได้พิสูจน์ว่า Run() goroutine ยัง process channel อยู่
+	checks["live_ws"] = fmt.Sprintf("ok (%d clients)", GlobalLiveHub.ClientCount())
+
+	// 4. Providers — มี live data ในหน่วยความจำไหม (cold start ใหม่ = ยังว่าง = degraded)
+	checks["providers"] = gin.H{
+		"active":        activeProviderName(),
+		"registry":      registry.Counts(),
+		"dropped_ws":    GlobalLiveHub.DroppedBroadcasts(),
+	}
+
+	status := http.StatusOK
+	state := "healthy"
+	if !healthy {
+		status = http.StatusServiceUnavailable
+		state = "unhealthy"
+	}
+	c.JSON(status, gin.H{
+		"status":       state,
+		"checks":       checks,
+		"generated_at": time.Now().Format(time.RFC3339),
+	})
+}
+
+// activeProviderName — คืนชื่อ provider ตัวแรกที่ยังใช้ได้ (หรือ "")
+func activeProviderName() string {
+	for _, p := range providerChain {
+		if p.Enabled() && p.Budget().Remaining() > 0 {
+			return p.Name()
+		}
+	}
+	return ""
+}
 
 // handleSourcesStatus รายงานสถานะแหล่งข้อมูล + โควตาคงเหลือ (ไม่เปิดเผย key)
 func handleSourcesStatus(c *gin.Context) {

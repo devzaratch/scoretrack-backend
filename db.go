@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"os"
@@ -558,5 +559,18 @@ func (db *PersistentDB) FlushNow() error {
 
 	db.dirty = false
 	log.Printf("💾 บันทึกข้อมูลลงดิสก์ครบก่อนปิดเซิร์ฟเวอร์แล้ว (%s)", db.filePath)
+
+	// ดัน snapshot ขึ้น Redis แบบ synchronous (forced) —
+	// เรียกตอน shutdown เท่านั้น ต่างจาก maybePushSnapshot ที่ throttle + async
+	// (Render บูต instance ใหม่กู้จาก snapshot ได้ แม้ instance เก่าตายก่อน syncWorker รอบถัดไป)
+	if rdb != nil {
+		pushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := rdb.Set(pushCtx, dbSnapshotKey, string(jsonData), 0).Err(); err != nil {
+			log.Printf("⚠️ สำรอง snapshot ขึ้น Redis ตอนปิดไม่สำเร็จ: %v", err)
+		} else {
+			log.Println("✅ ดัน snapshot ขึ้น Redis ตอนปิดครบแล้ว")
+		}
+	}
 	return nil
 }
