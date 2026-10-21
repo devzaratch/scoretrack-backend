@@ -35,13 +35,13 @@ func adminAuthMiddleware() gin.HandlerFunc {
 // GET /admin/stats — ภาพรวมทั้งระบบ
 func handleAdminStats(c *gin.Context) {
 	stats := gin.H{
-		"total_users":          0,
-		"total_sessions":       0,
-		"total_fcm_tokens":     0,
-		"total_predictions":    0,
-		"total_match_subs":     0,
-		"total_achievements":   0,
-		"cache_backend":        cacheBackendName(),
+		"total_users":        0,
+		"total_sessions":     0,
+		"total_fcm_tokens":   0,
+		"total_predictions":  0,
+		"total_match_subs":   0,
+		"total_achievements": 0,
+		"cache_backend":      cacheBackendName(),
 	}
 	if GlobalDB != nil {
 		stats["total_users"] = GlobalDB.CountUsers()

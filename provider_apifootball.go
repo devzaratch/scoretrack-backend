@@ -78,11 +78,11 @@ type apiFootEnvelope struct {
 
 type apiFootFixture struct {
 	Ref struct {
-		ID       int    `json:"id"`
-		Date     string `json:"date"`
-		Status   apiFootStatus `json:"status"`
-		Referee  *string `json:"referee"`
-		Venue    struct {
+		ID      int           `json:"id"`
+		Date    string        `json:"date"`
+		Status  apiFootStatus `json:"status"`
+		Referee *string       `json:"referee"`
+		Venue   struct {
 			ID   *int    `json:"id"`
 			Name *string `json:"name"`
 			City *string `json:"city"`
@@ -123,9 +123,9 @@ type apiFootStatus struct {
 }
 
 type apiFootTeam struct {
-	ID      int    `json:"id"`
-	Name    string `json:"name"`
-	Logo    string `json:"logo"`
+	ID     int    `json:"id"`
+	Name   string `json:"name"`
+	Logo   string `json:"logo"`
 	Winner *bool  `json:"winner"`
 }
 
@@ -175,7 +175,7 @@ type apiFootLineupSlot struct {
 }
 
 type apiFootStatTeam struct {
-	Team apiFootTeam `json:"team"`
+	Team       apiFootTeam `json:"team"`
 	Statistics []struct {
 		Type  string      `json:"type"`
 		Value interface{} `json:"value"`
@@ -199,9 +199,9 @@ func NewAPIFootProvider() *APIFootProvider {
 	}
 }
 
-func (p *APIFootProvider) Name() string           { return "apifootball" }
-func (p *APIFootProvider) Budget() *SourceBudget  { return p.budget }
-func (p *APIFootProvider) Enabled() bool          { return p.key != "" }
+func (p *APIFootProvider) Name() string          { return "apifootball" }
+func (p *APIFootProvider) Budget() *SourceBudget { return p.budget }
+func (p *APIFootProvider) Enabled() bool         { return p.key != "" }
 
 func (p *APIFootProvider) do(path string) ([]byte, error) {
 	if !p.Enabled() {
@@ -851,10 +851,10 @@ func parseAPIFootSub(e apiFootEvent) (subOut, subIn string) {
 }
 
 var apiFootPosLabels = map[string]string{
-	"G": "ผู้รักษาประตู",
-	"D": "กองหลัง",
-	"M": "กองกลาง",
-	"F": "กองหน้า",
+	"G":  "ผู้รักษาประตู",
+	"D":  "กองหลัง",
+	"M":  "กองกลาง",
+	"F":  "กองหน้า",
 	"GK": "ผู้รักษาประตู",
 }
 

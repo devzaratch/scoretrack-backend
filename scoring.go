@@ -106,12 +106,12 @@ func getMatchResult(matchID string) *MatchResult {
 
 // LeaderboardEntry แถว leaderboard คำนวณแล้ว
 type LeaderboardEntry struct {
-	UserID       string `json:"user_id"`
-	Points       int    `json:"points"`
-	Predictions  int    `json:"predictions"`
-	Finished     int    `json:"finished"`    // แมตช์ที่จบแล้ว (คิดคะแนนแล้ว)
-	ExactHits    int    `json:"exact_hits"`  // ถูกเป๊ะ
-	CorrectHits  int    `json:"correct_hits"` // ถูกผล
+	UserID      string `json:"user_id"`
+	Points      int    `json:"points"`
+	Predictions int    `json:"predictions"`
+	Finished    int    `json:"finished"`     // แมตช์ที่จบแล้ว (คิดคะแนนแล้ว)
+	ExactHits   int    `json:"exact_hits"`   // ถูกเป๊ะ
+	CorrectHits int    `json:"correct_hits"` // ถูกผล
 }
 
 // computeLeaderboard คำนวณคะแนนทุก user จากผลแมตช์จริง
