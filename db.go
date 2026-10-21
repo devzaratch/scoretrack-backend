@@ -209,6 +209,17 @@ func (db *PersistentDB) GetSessionSub(token string) string {
 	return db.data.UserSessions[token]
 }
 
+// DeleteUserSession — ลบ session (logout) เพื่อให้ token เดิมใช้ไม่ได้อีก
+func (db *PersistentDB) DeleteUserSession(token string) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	if _, ok := db.data.UserSessions[token]; ok {
+		delete(db.data.UserSessions, token)
+		db.dirty = true
+	}
+}
+
 // --------------------------------------------------
 // Match FCM Subscriptions Persistence
 // --------------------------------------------------

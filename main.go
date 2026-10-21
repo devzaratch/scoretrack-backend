@@ -338,6 +338,9 @@ func main() {
 
 		// Auth & User Endpoints (auth 10/min, user writes 30/min)
 		rg.POST("/auth/google", rateLimitMiddleware("auth", RLAuth, time.Minute), handleGoogleAuth)
+		// แผนข้อ 10 — session cookie: ยกระดับ session เดิมเป็น cookie + ออกจากระบบ
+		rg.POST("/auth/session", rateLimitMiddleware("auth", RLAuth, time.Minute), handleAuthSession)
+		rg.POST("/auth/logout", rateLimitMiddleware("auth", RLAuth, time.Minute), handleAuthLogout)
 		rg.GET("/user/favorites", handleGetFavorites)
 		rg.POST("/user/favorites", rateLimitMiddleware("user-write", RLUserWrite, time.Minute), handleSaveFavorites)
 		rg.POST("/user/fcm", rateLimitMiddleware("user-write", RLUserWrite, time.Minute), handleFCMRegister)
@@ -570,10 +573,9 @@ func handleChatWebSocket(c *gin.Context) {
 // ---------------------------------------------------------
 
 func getUserIdentifier(c *gin.Context) string {
-	authHeader := c.GetHeader("Authorization")
-	userKey := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
-	if userKey != "" && userKey != "null" && userKey != "undefined" {
-		return "user:" + userKey
+	// cookie มาก่อน (ระบบใหม่) แล้วค่อย Bearer (compat กับ client รุ่นเก่า)
+	if token := sessionTokenFromRequest(c); token != "" {
+		return "user:" + token
 	}
 	deviceID := strings.TrimSpace(c.GetHeader("X-Device-ID"))
 	if deviceID == "" {
@@ -626,11 +628,52 @@ func handleGoogleAuth(c *gin.Context) {
 	}
 
 	logInfof("✅ Google login สำเร็จ [%s]: %s", userKey, name)
+	// แผนข้อ 10: ออก session เป็น cookie (HttpOnly) แทนการคืน token ใน body
+	// -> XSS อ่าน token ไม่ได้ และ server รู้ว่าใคร login อยู่จาก cookie เอง
+	setSessionCookie(c, sessionToken)
 	c.JSON(http.StatusOK, gin.H{
-		"username": name,
-		"token":    sessionToken,
-		"favs":     favs,
+		"username":      name,
+		"favs":          favs,
+		"authenticated": true,
 	})
+}
+
+// handleAuthSession — ยกระดับ session เดิม (ที่เก็บใน localStorage) เป็น cookie
+// ใช้ตอน deploy ระบบ cookie: ผู้ใช้ที่ login ค้างจากรุ่นก่อนยังมี Bearer token
+// -> ให้ยิง endpoint นี้ 1 ครั้ง แล้วลบ token ออกจาก localStorage ฝั่ง client
+func handleAuthSession(c *gin.Context) {
+	token := sessionTokenFromRequest(c)
+	if token == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "ยังไม่มี session"})
+		return
+	}
+	if GlobalDB == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "ฐานข้อมูลไม่พร้อม"})
+		return
+	}
+	sub := GlobalDB.GetSessionSub(token)
+	if sub == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "session ไม่ถูกต้องหรือหมดอายุ"})
+		return
+	}
+	setSessionCookie(c, token)
+	logInfof("🔄 ยกระดับ session เป็น cookie สำเร็จ [%s]", "user:g:"+sub)
+	c.JSON(http.StatusOK, gin.H{
+		"authenticated": true,
+		"sub":           sub,
+	})
+}
+
+// handleAuthLogout — ลบ session + ล้าง cookie (ฝั่ง client แค่ล้าง localStorage
+// เดิมทำให้ token ยังใช้ได้ต่อ = ออกจากระบบไม่สมบูรณ์)
+func handleAuthLogout(c *gin.Context) {
+	token := sessionTokenFromRequest(c)
+	if token != "" && GlobalDB != nil {
+		GlobalDB.DeleteUserSession(token)
+	}
+	clearSessionCookie(c)
+	logInfof("👋 ออกจากระบบ (ลบ session แล้ว)")
+	c.JSON(http.StatusOK, gin.H{"status": "logged_out"})
 }
 
 // verifyGoogleIDToken ตรวจ ID token กับ Google แล้วคืน sub + ชื่อ
@@ -674,11 +717,9 @@ func verifyGoogleIDToken(ctx context.Context, idToken string) (sub, name string,
 	return info.Sub, display, nil
 }
 
-// resolveUserKey ผูก Bearer session -> google sub ก่อน fallback แบบเดิม
+// resolveUserKey ผูก session (cookie หรือ Bearer) -> google sub ก่อน fallback แบบเดิม
 func resolveUserKey(c *gin.Context) string {
-	authHeader := c.GetHeader("Authorization")
-	token := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
-	if token != "" && token != "null" && token != "undefined" && GlobalDB != nil {
+	if token := sessionTokenFromRequest(c); token != "" && GlobalDB != nil {
 		if sub := GlobalDB.GetSessionSub(token); sub != "" {
 			return "user:g:" + sub
 		}
