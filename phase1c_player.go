@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"strings"
 )
 
@@ -43,7 +42,7 @@ func fetchPlayerFromProviders(playerID string) ([]byte, string, bool) {
 		}
 		data, err := pp.PlayerData(playerID)
 		if err != nil {
-			log.Printf("ข้าม %s PlayerData(%q): %v", p.Name(), playerID, err)
+			logInfof("ข้าม %s PlayerData(%q): %v", p.Name(), playerID, err)
 			continue
 		}
 		if len(data) > 0 {
@@ -81,24 +80,24 @@ type goalPlayerTeam struct {
 type goalPlayerEnvelope struct {
 	Success bool `json:"success"`
 	Data    struct {
-		ID          string `json:"id"`
-		APIID       string `json:"apiId"`
-		Name        string `json:"name"`
-		Image       string `json:"image"`
-		Number      string `json:"number"`
-		Country     string `json:"country"`
-		Type        string `json:"type"`
-		Age         string `json:"age"`
-		Birthdate   string `json:"birthdate"`
-		TeamID      string `json:"teamId"`
-		IsActive    bool   `json:"isActive"`
-		Injured     string `json:"injured"`
-		IsCaptain   bool   `json:"isCaptain"`
-		MatchPlayed string `json:"matchPlayed"`
-		Goals       string `json:"goals"`
-		Assists     string `json:"assists"`
-		YellowCards string `json:"yellowCards"`
-		RedCards    string `json:"redCards"`
+		ID          string          `json:"id"`
+		APIID       string          `json:"apiId"`
+		Name        string          `json:"name"`
+		Image       string          `json:"image"`
+		Number      string          `json:"number"`
+		Country     string          `json:"country"`
+		Type        string          `json:"type"`
+		Age         string          `json:"age"`
+		Birthdate   string          `json:"birthdate"`
+		TeamID      string          `json:"teamId"`
+		IsActive    bool            `json:"isActive"`
+		Injured     string          `json:"injured"`
+		IsCaptain   bool            `json:"isCaptain"`
+		MatchPlayed string          `json:"matchPlayed"`
+		Goals       string          `json:"goals"`
+		Assists     string          `json:"assists"`
+		YellowCards string          `json:"yellowCards"`
+		RedCards    string          `json:"redCards"`
 		Team        *goalPlayerTeam `json:"team"`
 	} `json:"data"`
 }
@@ -180,11 +179,11 @@ func (p *GoalProvider) playerDetailJSON(ulid, playerID string) ([]byte, error) {
 	addStat("ใบแดง", d.RedCards)
 
 	out := map[string]interface{}{
-		"id":             firstNonEmptyStr(d.APIID, d.ID),
-		"name":           d.Name,
-		"nameFormatted":  d.Name,
-		"isCaptain":      d.IsCaptain,
-		"primaryTeam":    map[string]interface{}{"teamId": d.TeamID, "teamName": teamName, "teamLogo": teamBadge},
+		"id":                firstNonEmptyStr(d.APIID, d.ID),
+		"name":              d.Name,
+		"nameFormatted":     d.Name,
+		"isCaptain":         d.IsCaptain,
+		"primaryTeam":       map[string]interface{}{"teamId": d.TeamID, "teamName": teamName, "teamLogo": teamBadge},
 		"playerInformation": info,
 	}
 

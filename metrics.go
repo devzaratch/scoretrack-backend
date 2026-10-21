@@ -169,6 +169,7 @@ func handleAdminMetrics(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"pageviews": gin.H{"total": pvTotal, "paths": pageviews},
-		"vitals":    vitals, // avg หน่วย: CLS=จุด ที่เหลือ=มิลลิวินาที
+		"vitals":    vitals,                  // avg หน่วย: CLS=จุด ที่เหลือ=มิลลิวินาที
+		"server":    snapshotServerMetrics(), // แผนข้อ 9: requests/latency/cache/ws (observability.go)
 	})
 }

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -224,7 +223,7 @@ func (gd *GoalDetector) ProcessMatchUpdate(matchID int, homeScore, awayScore int
 	for _, ev := range events {
 		switch ev.Kind {
 		case "goal":
-			log.Printf("⚽ GOAL DETECTED! Match #%d: %s %d - %d %s (%s)", matchID, homeName, homeScore, awayScore, awayName, status)
+			logInfof("⚽ GOAL DETECTED! Match #%d: %s %d - %d %s (%s)", matchID, homeName, homeScore, awayScore, awayName, status)
 			payload := GoalEventPayload{
 				Type:      "GOAL",
 				MatchID:   matchID,
@@ -240,9 +239,9 @@ func (gd *GoalDetector) ProcessMatchUpdate(matchID int, homeScore, awayScore int
 			// Broadcast ให้ WebSocket clients เสมอ (หน้า live ต้องอัปเดต)
 			go GlobalLiveHub.BroadcastJSON(payload)
 		case "kickoff":
-			log.Printf("⏳ MATCH STARTED! #%d: %s vs %s (%s)", matchID, homeName, awayName, status)
+			logInfof("⏳ MATCH STARTED! #%d: %s vs %s (%s)", matchID, homeName, awayName, status)
 		case "ft":
-			log.Printf("🏁 MATCH FINISHED! #%d: %s %d - %d %s", matchID, homeName, homeScore, awayScore, awayName)
+			logInfof("🏁 MATCH FINISHED! #%d: %s %d - %d %s", matchID, homeName, homeScore, awayScore, awayName)
 		}
 
 		if pushEnabled {
@@ -262,7 +261,7 @@ func DispatchFCMPush(matchID int, title, body string) {
 		return
 	}
 
-	log.Printf("📱 Dispatching FCM Push Notification for Match #%d to %d subscribers", matchID, len(tokens))
+	logInfof("📱 Dispatching FCM Push Notification for Match #%d to %d subscribers", matchID, len(tokens))
 
 	projectID := getEnv("FCM_PROJECT_ID", "")
 	accessToken := getFCMAccessToken()
@@ -308,14 +307,14 @@ func DispatchFCMPush(matchID int, title, body string) {
 				resp.Body.Close()
 			}
 		}
-		log.Printf("✅ FCM HTTP v1 Push delivered successfully (%d/%d devices)", successCount, len(tokens))
+		logInfof("✅ FCM HTTP v1 Push delivered successfully (%d/%d devices)", successCount, len(tokens))
 		return
 	}
 
 	// 2. FCM Legacy API Fallback
 	serverKey := getEnv("FCM_SERVER_KEY", "")
 	if serverKey == "" {
-		log.Printf("ℹ️ FCM Push Ready: Title='%s', Body='%s' (%d devices)", title, body, len(tokens))
+		logInfof("ℹ️ FCM Push Ready: Title='%s', Body='%s' (%d devices)", title, body, len(tokens))
 		return
 	}
 
@@ -350,9 +349,9 @@ func DispatchFCMPush(matchID int, title, body string) {
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Printf("FCM Push delivery notice: %v", err)
+		logInfof("FCM Push delivery notice: %v", err)
 		return
 	}
 	defer resp.Body.Close()
-	log.Printf("✅ FCM Push legacy delivered (HTTP %d)", resp.StatusCode)
+	logInfof("✅ FCM Push legacy delivered (HTTP %d)", resp.StatusCode)
 }

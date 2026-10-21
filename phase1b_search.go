@@ -1,4 +1,4 @@
-﻿package main
+package main
 
 // ---------------------------------------------------------------------------
 // Phase 1b P3 — กล่องค้นหา (/api/search) จาก GOAL API
@@ -16,7 +16,6 @@
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -90,7 +89,7 @@ func searchTermFromProviders(term string) ([]interface{}, string, bool) {
 		}
 		groups, err := sp.SearchSuggestions(term)
 		if err != nil {
-			log.Printf("⚠️ %s SearchSuggestions(%q): %v", p.Name(), term, err)
+			logInfof("⚠️ %s SearchSuggestions(%q): %v", p.Name(), term, err)
 			continue
 		}
 		if groups != nil {
@@ -138,19 +137,19 @@ func (p *GoalProvider) SearchSuggestions(term string) ([]interface{}, error) {
 		}(i, jb.kind, jb.path)
 	}
 	wg.Wait()
-	log.Printf("search(%q) teams=%v leagues=%v players=%v total=%v", q, res[0].dur, res[1].dur, res[2].dur, time.Since(t0))
+	logInfof("search(%q) teams=%v leagues=%v players=%v total=%v", q, res[0].dur, res[1].dur, res[2].dur, time.Since(t0))
 
 	teamGroups, errT := res[0].items, res[0].err
 	leagueGroups, errL := res[1].items, res[1].err
 	playerGroups, errP := res[2].items, res[2].err
 	if errT != nil {
-		log.Printf("ℹ️ goalapi search teams(%q): %v", q, errT)
+		logInfof("ℹ️ goalapi search teams(%q): %v", q, errT)
 	}
 	if errL != nil {
-		log.Printf("ℹ️ goalapi search leagues(%q): %v", q, errL)
+		logInfof("ℹ️ goalapi search leagues(%q): %v", q, errL)
 	}
 	if errP != nil {
-		log.Printf("ℹ️ goalapi search players(%q): %v", q, errP)
+		logInfof("ℹ️ goalapi search players(%q): %v", q, errP)
 	}
 
 	// ถ้าทุกกลุ่มล้มเหลวจริง -> ส่ง err ให้ caller fallback

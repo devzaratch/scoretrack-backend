@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -92,7 +91,7 @@ func getRapidAPIKey() string {
 		key = getEnv("RAPIDAPI_KEY", "")
 	}
 	if key == "" {
-		log.Println("⚠️ RAPIDAPI_KEY is not set in environment or .env.local")
+		logInfoln("⚠️ RAPIDAPI_KEY is not set in environment or .env.local")
 	}
 	return key
 }
@@ -111,7 +110,7 @@ func main() {
 	useRedisTLS := strings.EqualFold(getEnv("REDIS_TLS", "false"), "true")
 	conn, err := net.DialTimeout("tcp", redisAddr, 500*time.Millisecond)
 	if err != nil {
-		log.Println("ℹ️ Info: ไม่พบ Redis Server -> สลับไปใช้ Direct Proxy & Mock Fallback (ปกติ หากไม่ได้เปิด Redis)")
+		logInfoln("ℹ️ Info: ไม่พบ Redis Server -> สลับไปใช้ Direct Proxy & Mock Fallback (ปกติ หากไม่ได้เปิด Redis)")
 		rdb = nil
 	} else {
 		conn.Close()
@@ -129,12 +128,12 @@ func main() {
 		pingErr := client.Ping(pingCtx).Err()
 		cancelPing()
 		if pingErr != nil {
-			log.Printf("ℹ️ Info: Redis PING ไม่สำเร็จ (%v) -> ใช้ in-memory cache แทน", pingErr)
+			logInfof("ℹ️ Info: Redis PING ไม่สำเร็จ (%v) -> ใช้ in-memory cache แทน", pingErr)
 			client.Close()
 			rdb = nil
 		} else {
 			rdb = client
-			log.Println("✅ เชื่อมต่อ Redis สำเร็จ!")
+			logInfoln("✅ เชื่อมต่อ Redis สำเร็จ!")
 		}
 	}
 
@@ -152,7 +151,11 @@ func main() {
 	// 2. Start Live Ticker Engine
 	go startLiveTicker()
 
-	r := gin.Default()
+	// gin.New + middleware ของเราเอง (แผนข้อ 9): gin.Default() = [GIN] free text
+	// logger + Recovery ไม่มี field — ตอนนี้ request log เป็น JSON ทุกบรรทัด
+	// (observability.go) + panic เก็บ stack ลง structured log
+	r := gin.New()
+	r.Use(recoveryMiddleware(), requestLogMiddleware())
 
 	// หน้าแรก Root / สำหรับตรวจสอบสถานะ Server
 	r.GET("/", func(c *gin.Context) {
@@ -161,7 +164,7 @@ func main() {
 			"message": "🚀 Score-track Go Backend is running!",
 			"endpoints": gin.H{
 				"matches":   "/api/matches",
-			"sources":   "/api/_sources",
+				"sources":   "/api/_sources",
 				"match":     "/api/match/:id",
 				"league":    "/api/league/:id",
 				"team":      "/api/team/:id",
@@ -354,7 +357,7 @@ func main() {
 
 		// Error reporting (frontend monitoring)
 		rg.POST("/client-errors", rateLimitMiddleware("error-report", RLErrorReport, time.Minute), handleClientError)
-	rg.POST("/metrics", rateLimitMiddleware("metrics", RLMetrics, time.Minute), handleMetrics)
+		rg.POST("/metrics", rateLimitMiddleware("metrics", RLMetrics, time.Minute), handleMetrics)
 
 		// Admin Panel
 		setupAdminRoutes(rg)
@@ -372,7 +375,7 @@ func main() {
 		Handler:           r,
 		ReadHeaderTimeout: 10 * time.Second, // กัน slowloris — header ที่ค้างไม่ถูกอ่านทันเวลา
 	}
-	log.Printf("🚀 Go Backend (พร้อม WebSocket Live Server & Dynamic Engine) เริ่มทำงานที่ http://localhost:%s", port)
+	logInfof("🚀 Go Backend (พร้อม WebSocket Live Server & Dynamic Engine) เริ่มทำงานที่ http://localhost:%s", port)
 
 	// Serve ใน goroutine เพื่อให้ main รอสัญญาณจบได้
 	serveErr := make(chan error, 1)
@@ -389,26 +392,26 @@ func main() {
 	select {
 	case err := <-serveErr:
 		if err != nil && err != http.ErrServerClosed {
-			log.Fatalf("❌ Server ล่ม: %v", err)
+			logFatalf("❌ Server ล่ม: %v", err)
 		}
 	case sig := <-quit:
-		log.Printf("🛑 ได้รับสัญญาณ %v — กำลังปิดเซิร์ฟเวอร์อย่างปลอดภัย...", sig)
+		logInfof("🛑 ได้รับสัญญาณ %v — กำลังปิดเซิร์ฟเวอร์อย่างปลอดภัย...", sig)
 
 		// ตัด timeout กันค้าง: connection ที่ยัง open (เช่น WS) ถูก force-close เมื่อหมดเวลา
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
-			log.Printf("⚠️ Shutdown ไม่สมบูรณ์: %v (บังคับปิด)", err)
+			logInfof("⚠️ Shutdown ไม่สมบูรณ์: %v (บังคับปิด)", err)
 			srv.Close()
 		}
 
 		// FlushNow เขียนไฟล์ล่าสุด (รวมข้อมูล 3 วิท้าย) + ดัน snapshot ขึ้น Redis
 		if GlobalDB != nil {
 			if err := GlobalDB.FlushNow(); err != nil {
-				log.Printf("⚠️ Flush ก่อนปิดล้มเหลว: %v", err)
+				logInfof("⚠️ Flush ก่อนปิดล้มเหลว: %v", err)
 			}
 		}
-		log.Printf("✅ ปิดเซิร์ฟเวอร์เรียบร้อย")
+		logInfof("✅ ปิดเซิร์ฟเวอร์เรียบร้อย")
 	}
 }
 
@@ -419,7 +422,7 @@ func main() {
 func handleWebSocket(c *gin.Context) {
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
-		log.Printf("WebSocket Upgrade Error: %v", err)
+		logInfof("WebSocket Upgrade Error: %v", err)
 		return
 	}
 
@@ -454,7 +457,7 @@ func startLiveTicker() {
 		// regression เดิม: อยู่หลัง gate "ไม่มีคนดู -> continue" -> state เก่าค้าง
 		// memory leak ถาวรตอนไม่มีใครเปิดเว็บ prune ฟรี = ไม่ยิง upstream
 		if removed := GlobalGoalDetector.pruneOlderThan(2 * time.Hour); removed > 0 {
-			log.Printf("🧹 goal detector: prune %d match states เก่าแล้ว", removed)
+			logInfof("🧹 goal detector: prune %d match states เก่าแล้ว", removed)
 		}
 
 		// เลือกแหล่ง live ตัวแรกที่ยังใช้ได้ (GOAL ก่อน ตัวสำรอง API-Football ทีหลัง)
@@ -483,7 +486,7 @@ func startLiveTicker() {
 			if time.Since(lastInvalidate) > 2*time.Minute && src.HasUnknownLiveMatches() {
 				src.InvalidateTodayCache()
 				lastInvalidate = time.Now()
-				log.Printf("🔄 live ticker: พบคู่แข่งใหม่ -> โหลดรายการวันนี้ใหม่")
+				logInfof("🔄 live ticker: พบคู่แข่งใหม่ -> โหลดรายการวันนี้ใหม่")
 			}
 		}
 
@@ -598,7 +601,7 @@ func handleGoogleAuth(c *gin.Context) {
 	// ตรวจ Google ID token จริง (ไม่เชื่อ token ดิบจาก client)
 	sub, name, err := verifyGoogleIDToken(c.Request.Context(), strings.TrimSpace(body.Token))
 	if err != nil {
-		log.Printf("❌ Google auth verify ล้มเหลว: %v", err)
+		logInfof("❌ Google auth verify ล้มเหลว: %v", err)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "ยืนยันตัวตน Google ไม่สำเร็จ"})
 		return
 	}
@@ -622,7 +625,7 @@ func handleGoogleAuth(c *gin.Context) {
 		favs = []int{}
 	}
 
-	log.Printf("✅ Google login สำเร็จ [%s]: %s", userKey, name)
+	logInfof("✅ Google login สำเร็จ [%s]: %s", userKey, name)
 	c.JSON(http.StatusOK, gin.H{
 		"username": name,
 		"token":    sessionToken,
@@ -712,7 +715,7 @@ func handleSaveFavorites(c *gin.Context) {
 		GlobalDB.SaveUserFavorites(userKey, body.Favorites)
 	}
 
-	log.Printf("⭐ บันทึกรายการโปรดสำหรับผู้ใช้ [%s]: %v", userKey, body.Favorites)
+	logInfof("⭐ บันทึกรายการโปรดสำหรับผู้ใช้ [%s]: %v", userKey, body.Favorites)
 	c.JSON(http.StatusOK, gin.H{"status": "saved", "favorites": body.Favorites, "user_key": userKey})
 }
 
@@ -734,7 +737,7 @@ func handleFCMRegister(c *gin.Context) {
 		GlobalDB.SaveFCMToken(body.FCMToken)
 	}
 
-	log.Printf("📲 ลงทะเบียน FCM Push Token สำเร็จ (ท้าย token: ...%s)", tailOf(body.FCMToken, 8))
+	logInfof("📲 ลงทะเบียน FCM Push Token สำเร็จ (ท้าย token: ...%s)", tailOf(body.FCMToken, 8))
 	c.JSON(http.StatusOK, gin.H{"status": "registered"})
 }
 
@@ -760,10 +763,10 @@ func handleMatchSubscribe(c *gin.Context) {
 	if GlobalDB != nil {
 		if body.Action == "unsubscribe" {
 			subCount = GlobalDB.UnsubscribeMatch(body.MatchID, token)
-			log.Printf("🔔 ยกเลิกการติดตามการแจ้งเตือนแมตช์ #%d (Token: %s)", body.MatchID, token)
+			logInfof("🔔 ยกเลิกการติดตามการแจ้งเตือนแมตช์ #%d (Token: %s)", body.MatchID, token)
 		} else {
 			subCount = GlobalDB.SubscribeMatch(body.MatchID, token)
-			log.Printf("🔔 ลงทะเบียนการแจ้งเตือนประตูแมตช์ #%d สำเร็จ (Token: %s)", body.MatchID, token)
+			logInfof("🔔 ลงทะเบียนการแจ้งเตือนประตูแมตช์ #%d สำเร็จ (Token: %s)", body.MatchID, token)
 		}
 	}
 
@@ -794,8 +797,8 @@ func handlePredictionsLeaderboard(c *gin.Context) {
 
 	payload := gin.H{
 		"leaderboard": leaderboard,
-		"count":      len(leaderboard),
-		"scoring":    "ถูกสกอร์เป๊ะ +3 · ถูกผล +1 · ผิด 0",
+		"count":       len(leaderboard),
+		"scoring":     "ถูกสกอร์เป๊ะ +3 · ถูกผล +1 · ผิด 0",
 	}
 	raw, _ := json.Marshal(payload)
 	cacheSet(cacheKey, raw, TTLLeaderboard)
@@ -812,7 +815,7 @@ func handleMyPoints(c *gin.Context) {
 
 func handleSavePrediction(c *gin.Context) {
 	var body struct {
-		MatchID     string                 `json:"match_id"`
+		MatchID    string                 `json:"match_id"`
 		Prediction map[string]interface{} `json:"prediction"`
 	}
 	if err := c.BindJSON(&body); err != nil || body.MatchID == "" || body.Prediction == nil {
@@ -857,11 +860,11 @@ func handleCalendar(c *gin.Context) {
 	// For now, return mock/fallback calendar events
 	events := []map[string]interface{}{
 		{
-			"match_id": "999999",
-			"home_name": "ททีม A",
-			"away_name": "ทีม B",
+			"match_id":   "999999",
+			"home_name":  "ททีม A",
+			"away_name":  "ทีม B",
 			"start_time": time.Now().Add(24 * time.Hour).Format(time.RFC3339),
-			"status": "scheduled",
+			"status":     "scheduled",
 		},
 	}
 	c.JSON(http.StatusOK, gin.H{"calendar": events})
@@ -870,11 +873,11 @@ func handleCalendar(c *gin.Context) {
 func handleCalendarIcal(c *gin.Context) {
 	events := []map[string]interface{}{
 		{
-			"match_id": "999999",
-			"home_name": "ทีม A",
-			"away_name": "ทีม B",
+			"match_id":   "999999",
+			"home_name":  "ทีม A",
+			"away_name":  "ทีม B",
 			"start_time": time.Now().Add(24 * time.Hour).Format(time.RFC3339),
-			"status": "scheduled",
+			"status":     "scheduled",
 		},
 	}
 
@@ -933,7 +936,7 @@ func handleClientError(c *gin.Context) {
 			f.Close()
 		}
 	}
-	log.Printf("⚠️ Client Error [%s] %s: %s", src, page, msg)
+	logInfof("⚠️ Client Error [%s] %s: %s", src, page, msg)
 
 	c.JSON(http.StatusOK, gin.H{"status": "logged"})
 }
@@ -957,6 +960,8 @@ func rateLimiterMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ip := c.ClientIP()
 		if !GlobalRateLimiter.Allow(ip, 120*rateLimitScale, time.Minute) {
+			rateLimitedTotal.Add(1)
+			logWarn("rate limited", "ip", ip, "scope", "global", "route", c.FullPath())
 			c.JSON(http.StatusTooManyRequests, gin.H{
 				"error": "คำขอมากเกินไป กรุณารอ 1 นาทีก่อนลองใหม่",
 			})
@@ -973,6 +978,8 @@ func rateLimitMiddleware(route string, limit int, window time.Duration) gin.Hand
 	return func(c *gin.Context) {
 		key := c.ClientIP() + "|" + route
 		if !GlobalRateLimiter.AllowKey(key, limit*rateLimitScale, window) {
+			rateLimitedTotal.Add(1)
+			logWarn("rate limited", "ip", c.ClientIP(), "scope", route, "route", c.FullPath())
 			c.Header("Retry-After", fmt.Sprintf("%d", int(window.Seconds())))
 			c.JSON(http.StatusTooManyRequests, gin.H{
 				"error": fmt.Sprintf("คำขอมากเกินไปสำหรับ %s กรุณารอ %v ก่อนลองใหม่", route, window),
@@ -986,14 +993,14 @@ func rateLimitMiddleware(route string, limit int, window time.Duration) gin.Hand
 
 // Rate limit profiles (per-endpoint)
 const (
-	RLAuth          = 10    // auth/google — ป้องกัน token spam
-	RLSearch        = 30    // search suggest — แพง (GOAL API)
-	RLProxy         = 60    // proxy endpoints (matches/league/team/player)
-	RLNews          = 30    // news RSS
-	RLErrorReport   = 20    // client-errors — กัน log spam
-	RLMetrics       = 60    // metrics beacon (vitals+pageview)
-	RLPrediction    = 30    // predictions save
-	RLUserWrite     = 30    // favorites/fcm/subscribe writes
+	RLAuth        = 10 // auth/google — ป้องกัน token spam
+	RLSearch      = 30 // search suggest — แพง (GOAL API)
+	RLProxy       = 60 // proxy endpoints (matches/league/team/player)
+	RLNews        = 30 // news RSS
+	RLErrorReport = 20 // client-errors — กัน log spam
+	RLMetrics     = 60 // metrics beacon (vitals+pageview)
+	RLPrediction  = 30 // predictions save
+	RLUserWrite   = 30 // favorites/fcm/subscribe writes
 )
 
 // ---------------------------------------------------------
@@ -1039,9 +1046,9 @@ func handleHealthz(c *gin.Context) {
 
 	// 4. Providers — มี live data ในหน่วยความจำไหม (cold start ใหม่ = ยังว่าง = degraded)
 	checks["providers"] = gin.H{
-		"active":        activeProviderName(),
-		"registry":      registry.Counts(),
-		"dropped_ws":    GlobalLiveHub.DroppedBroadcasts(),
+		"active":     activeProviderName(),
+		"registry":   registry.Counts(),
+		"dropped_ws": GlobalLiveHub.DroppedBroadcasts(),
 	}
 
 	status := http.StatusOK
@@ -1289,7 +1296,7 @@ func handleProxy(cacheKeyPattern string, ttl time.Duration, targetURLBuilder fun
 			// ยิ่งค้างนานยิ่งผิดนาน — สั้นเพื่อให้ retry เจอของจริงทันทีที่ provider ฟื้น
 			if dataType == "league" && bytes.Contains(data, []byte(`"hardcoded-stale"`)) {
 				cacheTTL = 3 * time.Minute
-				log.Printf("⚠️ league %s: ตารางคะแนนเป็นข้อมูล hardcode ฤดูกาลเก่า -> cache สั้น 3 นาที ( provider จริงล่ม )", paramOrQuery)
+				logInfof("⚠️ league %s: ตารางคะแนนเป็นข้อมูล hardcode ฤดูกาลเก่า -> cache สั้น 3 นาที ( provider จริงล่ม )", paramOrQuery)
 			}
 			cacheSet(cacheKey, data, cacheTTL)
 
@@ -1305,7 +1312,7 @@ func handleProxy(cacheKeyPattern string, ttl time.Duration, targetURLBuilder fun
 		// ให้หน้าเว็บเรียก notFound() ได้ (HTTP 404 จริง + noindex + not-found.tsx)
 		// เดิมตอบ 200 ร่างเปล่า (JSON.parse หน้าเว็บพัง) หรือ 200 + ข้อมูลปลอม
 		if shouldNotFound(dataType, realData) {
-			log.Printf("ℹ️ 404 %s %s: ทุกแหล่งข้อมูลล้มและไม่มีข้อมูลสำรองจริง", dataType, paramOrQuery)
+			logInfof("ℹ️ 404 %s %s: ทุกแหล่งข้อมูลล้มและไม่มีข้อมูลสำรองจริง", dataType, paramOrQuery)
 			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 			return
 		}
@@ -1314,7 +1321,7 @@ func handleProxy(cacheKeyPattern string, ttl time.Duration, targetURLBuilder fun
 			realTTL := ttl
 			if dataType == "league" && bytes.Contains(realData, []byte(`"hardcoded-stale"`)) {
 				realTTL = 3 * time.Minute
-				log.Printf("⚠️ league %s: Real-Data-Engine คืนตาราง hardcode ฤดูกาลเก่า -> cache สั้น 3 นาที", paramOrQuery)
+				logInfof("⚠️ league %s: Real-Data-Engine คืนตาราง hardcode ฤดูกาลเก่า -> cache สั้น 3 นาที", paramOrQuery)
 			}
 			cacheSet(cacheKey, realData, realTTL)
 		}

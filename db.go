@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -11,14 +10,14 @@ import (
 )
 
 type StoreData struct {
-	ChatMessages       map[string][]map[string]interface{} `json:"chat_messages"`
-	UserFavorites      map[string][]int                    `json:"user_favorites"`
-	UserSessions       map[string]string                   `json:"user_sessions"` // session token -> google sub
-	MatchSubscriptions map[int][]string                    `json:"match_subscriptions"`
-	FCMTokens          map[string]int64                    `json:"fcm_tokens"`       // token -> unix timestamp ที่ลงทะเบียนล่าสุด
-	Predictions               map[string]map[string]interface{} `json:"predictions"`      // userID -> matchID -> prediction data
-	UserNotificationPrefs    map[string]map[string]interface{} `json:"notification_prefs"` // userID -> preferences
-	Achievements           map[string][]string               `json:"achievements"`       // userID -> list of unlocked achievement IDs
+	ChatMessages          map[string][]map[string]interface{} `json:"chat_messages"`
+	UserFavorites         map[string][]int                    `json:"user_favorites"`
+	UserSessions          map[string]string                   `json:"user_sessions"` // session token -> google sub
+	MatchSubscriptions    map[int][]string                    `json:"match_subscriptions"`
+	FCMTokens             map[string]int64                    `json:"fcm_tokens"`         // token -> unix timestamp ที่ลงทะเบียนล่าสุด
+	Predictions           map[string]map[string]interface{}   `json:"predictions"`        // userID -> matchID -> prediction data
+	UserNotificationPrefs map[string]map[string]interface{}   `json:"notification_prefs"` // userID -> preferences
+	Achievements          map[string][]string                 `json:"achievements"`       // userID -> list of unlocked achievement IDs
 }
 
 type PersistentDB struct {
@@ -37,21 +36,21 @@ var GlobalDB *PersistentDB
 func InitDB() *PersistentDB {
 	dataDir := "data"
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		log.Printf("Warning: Failed to create data dir: %v", err)
+		logInfof("Warning: Failed to create data dir: %v", err)
 	}
 
 	dbPath := filepath.Join(dataDir, "store.json")
 	db := &PersistentDB{
 		filePath: dbPath,
 		data: StoreData{
-			ChatMessages:       make(map[string][]map[string]interface{}),
-			UserFavorites:      make(map[string][]int),
-			UserSessions:       make(map[string]string),
-			MatchSubscriptions: make(map[int][]string),
-			FCMTokens:          make(map[string]int64),
-			Predictions:               make(map[string]map[string]interface{}),
-			UserNotificationPrefs:    make(map[string]map[string]interface{}),
-			Achievements:             make(map[string][]string),
+			ChatMessages:          make(map[string][]map[string]interface{}),
+			UserFavorites:         make(map[string][]int),
+			UserSessions:          make(map[string]string),
+			MatchSubscriptions:    make(map[int][]string),
+			FCMTokens:             make(map[string]int64),
+			Predictions:           make(map[string]map[string]interface{}),
+			UserNotificationPrefs: make(map[string]map[string]interface{}),
+			Achievements:          make(map[string][]string),
 		},
 	}
 
@@ -83,7 +82,7 @@ func InitDB() *PersistentDB {
 			if loaded.Achievements != nil {
 				db.data.Achievements = loaded.Achievements
 			}
-			log.Printf("📦 Loaded persistent database from %s", dbPath)
+			logInfof("📦 Loaded persistent database from %s", dbPath)
 		}
 	}
 
@@ -487,11 +486,11 @@ func (db *PersistentDB) GetAllUsers() []map[string]interface{} {
 	defer db.mu.RUnlock()
 
 	type userInfo struct {
-		key           string
-		favorites     int
-		predictions   int
-		achievements  int
-		hasFCM        bool
+		key          string
+		favorites    int
+		predictions  int
+		achievements int
+		hasFCM       bool
 	}
 	users := map[string]*userInfo{}
 
@@ -558,7 +557,7 @@ func (db *PersistentDB) FlushNow() error {
 	}
 
 	db.dirty = false
-	log.Printf("💾 บันทึกข้อมูลลงดิสก์ครบก่อนปิดเซิร์ฟเวอร์แล้ว (%s)", db.filePath)
+	logInfof("💾 บันทึกข้อมูลลงดิสก์ครบก่อนปิดเซิร์ฟเวอร์แล้ว (%s)", db.filePath)
 
 	// ดัน snapshot ขึ้น Redis แบบ synchronous (forced) —
 	// เรียกตอน shutdown เท่านั้น ต่างจาก maybePushSnapshot ที่ throttle + async
@@ -567,9 +566,9 @@ func (db *PersistentDB) FlushNow() error {
 		pushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := rdb.Set(pushCtx, dbSnapshotKey, string(jsonData), 0).Err(); err != nil {
-			log.Printf("⚠️ สำรอง snapshot ขึ้น Redis ตอนปิดไม่สำเร็จ: %v", err)
+			logInfof("⚠️ สำรอง snapshot ขึ้น Redis ตอนปิดไม่สำเร็จ: %v", err)
 		} else {
-			log.Println("✅ ดัน snapshot ขึ้น Redis ตอนปิดครบแล้ว")
+			logInfoln("✅ ดัน snapshot ขึ้น Redis ตอนปิดครบแล้ว")
 		}
 	}
 	return nil

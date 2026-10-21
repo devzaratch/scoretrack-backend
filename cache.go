@@ -1,4 +1,4 @@
-﻿package main
+package main
 
 import (
 	"context"
@@ -14,15 +14,15 @@ import (
 
 const (
 	// TTL มาตรฐานต่อชนิดข้อมูล
-	TTLMatchLive    = 30 * time.Second  // แมตช์กำลังแข่ง (realtime)
-	TTLMatchRecent  = 90 * time.Second  // แมตช์เพิ่งจบ (รอ confirm)
-	TTLMatchDone    = 6 * time.Hour     // แมตช์จบแล้ว ( immutable)
-	TTLMatchesList  = 60 * time.Second  // รายการแมตช์รายวัน
-	TTLNews         = 10 * time.Minute  // ข่าว RSS (เปลี่ยนช้า)
-	TTLSearch       = 1 * time.Hour     // search suggest
-	TTLLeaderboard  = 2 * time.Minute   // leaderboard (คำนวณจาก DB)
-	TTLTeamLeague   = 30 * time.Minute  // team / league detail (static-ish)
-	TTLPlayer       = 30 * time.Minute  // player profile
+	TTLMatchLive   = 30 * time.Second // แมตช์กำลังแข่ง (realtime)
+	TTLMatchRecent = 90 * time.Second // แมตช์เพิ่งจบ (รอ confirm)
+	TTLMatchDone   = 6 * time.Hour    // แมตช์จบแล้ว ( immutable)
+	TTLMatchesList = 60 * time.Second // รายการแมตช์รายวัน
+	TTLNews        = 10 * time.Minute // ข่าว RSS (เปลี่ยนช้า)
+	TTLSearch      = 1 * time.Hour    // search suggest
+	TTLLeaderboard = 2 * time.Minute  // leaderboard (คำนวณจาก DB)
+	TTLTeamLeague  = 30 * time.Minute // team / league detail (static-ish)
+	TTLPlayer      = 30 * time.Minute // player profile
 )
 
 // cacheBackendName คืนชื่อ backend ของ cache ปัจจุบัน (ใช้แสดงใน Admin Panel)
@@ -34,18 +34,22 @@ func cacheBackendName() string {
 }
 
 // cacheGet คืนข้อมูลจาก cache ถ้ามี (Redis ก่อน ค่อย memory)
-// คืน ([]byte, source, found)
+// คืน ([]byte, source, found) + นับ hit/miss ให้ metrics (แผนข้อ 9)
 func cacheGet(key string) ([]byte, string, bool) {
 	if rdb != nil {
 		cached, err := rdb.Get(context.Background(), key).Result()
 		if err == nil && cached != "" {
+			cacheHitsTotal.Add(1)
 			return []byte(cached), "Redis-Cache", true
 		}
+		cacheMissesTotal.Add(1)
 		return nil, "", false
 	}
 	if data, found := memoryCache.Get(key); found {
+		cacheHitsTotal.Add(1)
 		return data, "In-Memory-Cache", true
 	}
+	cacheMissesTotal.Add(1)
 	return nil, "", false
 }
 

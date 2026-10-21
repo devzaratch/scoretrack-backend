@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -49,11 +48,11 @@ func loadBackfillState() {
 	}
 	var st playerBackfillState
 	if err := json.Unmarshal(raw, &st); err != nil || st.Done == nil {
-		log.Printf("ℹ️ player backfill: อ่าน state พัง (%v) -> เริ่มใหม่", err)
+		logInfof("ℹ️ player backfill: อ่าน state พัง (%v) -> เริ่มใหม่", err)
 		return
 	}
 	backfillDone = st.Done
-	log.Printf("🧩 player backfill: โหลด state แล้ว (ทีมที่ทำไปแล้ว %d)", len(backfillDone))
+	logInfof("🧩 player backfill: โหลด state แล้ว (ทีมที่ทำไปแล้ว %d)", len(backfillDone))
 }
 
 func saveBackfillState() {
@@ -78,7 +77,7 @@ func startPlayerBackfill() {
 	loadBackfillState()
 
 	if !envBool("PLAYER_BACKFILL", true) {
-		log.Println("🧩 player backfill: ปิดใช้งาน (PLAYER_BACKFILL=off)")
+		logInfoln("🧩 player backfill: ปิดใช้งาน (PLAYER_BACKFILL=off)")
 		return
 	}
 
@@ -98,7 +97,7 @@ func startPlayerBackfill() {
 			}
 		}
 	}()
-	log.Printf("🧩 player backfill: เปิดแล้ว (ทุก %v ทีมละครั้ง, ยิงเมื่อโควตาเหลือ >%d)", interval, minRemain)
+	logInfof("🧩 player backfill: เปิดแล้ว (ทุก %v ทีมละครั้ง, ยิงเมื่อโควตาเหลือ >%d)", interval, minRemain)
 }
 
 // backfillOneTeam ดึง squad ของทีมถัดไปที่ยังไม่เคยทำ แล้ว remember นักเตะทั้งทีม
@@ -132,13 +131,13 @@ func backfillOneTeam(g *GoalProvider, minRemain int) {
 	body, err := g.do("/teams/" + ulid + "/players")
 	if err != nil {
 		// budget/ล้มเหลว — ไม่นับเป็น done ทีมนี้ จะลองใหม่รอบหน้า
-		log.Printf("🧩 player backfill: ดึง squad ทีม %s ไม่สำเร็จ: %v", ulid, err)
+		logInfof("🧩 player backfill: ดึง squad ทีม %s ไม่สำเร็จ: %v", ulid, err)
 		return
 	}
 
 	var resp goalTeamPlayersResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
-		log.Printf("🧩 player backfill: parse squad ทีม %s พัง: %v", ulid, err)
+		logInfof("🧩 player backfill: parse squad ทีม %s พัง: %v", ulid, err)
 		return
 	}
 
@@ -158,6 +157,6 @@ func backfillOneTeam(g *GoalProvider, minRemain int) {
 	saveBackfillState()
 
 	after := registry.Counts()["players"]
-	log.Printf("🧩 player backfill: ทีม %s -> นักเตะ %d คน (registry นักเตะ %d -> %d)",
+	logInfof("🧩 player backfill: ทีม %s -> นักเตะ %d คน (registry นักเตะ %d -> %d)",
 		ulid, remembered, before, after)
 }

@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"log"
 	"time"
 )
 
@@ -46,7 +45,7 @@ func (db *PersistentDB) restoreFromSnapshot() bool {
 	}
 	var snap StoreData
 	if err := json.Unmarshal(snapBytes, &snap); err != nil {
-		log.Printf("⚠️ Redis snapshot parse ไม่ได้ (ข้าม restore): %v", err)
+		logInfof("⚠️ Redis snapshot parse ไม่ได้ (ข้าม restore): %v", err)
 		return false
 	}
 	if !shouldRestoreFromSnapshot(&db.data, &snap) {
@@ -78,7 +77,7 @@ func (db *PersistentDB) restoreFromSnapshot() bool {
 		db.data.Achievements = snap.Achievements
 	}
 	db.dirty = true // syncWorker เขียนไฟล์ local ให้ mirror ภายใน 3 วิ
-	log.Printf("♻️ กู้ข้อมูลผู้ใช้จาก Redis snapshot สำเร็จ (%d sessions, %d favorites, %d predictions, %d fcm)",
+	logInfof("♻️ กู้ข้อมูลผู้ใช้จาก Redis snapshot สำเร็จ (%d sessions, %d favorites, %d predictions, %d fcm)",
 		len(snap.UserSessions), len(snap.UserFavorites), len(snap.Predictions), len(snap.FCMTokens))
 	return true
 }
@@ -97,7 +96,7 @@ func (db *PersistentDB) maybePushSnapshot(jsonData []byte) {
 	payload := string(jsonData)
 	go func() {
 		if err := rdb.Set(ctx, dbSnapshotKey, payload, 0).Err(); err != nil {
-			log.Printf("⚠️ สำรอง snapshot ขึ้น Redis ไม่สำเร็จ: %v", err)
+			logInfof("⚠️ สำรอง snapshot ขึ้น Redis ไม่สำเร็จ: %v", err)
 		}
 	}()
 }

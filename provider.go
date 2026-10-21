@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -433,7 +432,7 @@ func (r *idRegistry) Load() {
 		Players  map[string]idRef `json:"players"`
 	}
 	if err := json.Unmarshal(raw, &doc); err != nil {
-		log.Printf("⚠️ id_registry อ่านไม่ได้: %v", err)
+		logInfof("⚠️ id_registry อ่านไม่ได้: %v", err)
 		return
 	}
 
@@ -523,7 +522,7 @@ func initProviders() {
 		if p.Enabled() {
 			state = "เปิด"
 		}
-		log.Printf("🔌 Data Provider [%s]: %s (โควตาคงเหลือ %d)", p.Name(), state, p.Budget().Remaining())
+		logInfof("🔌 Data Provider [%s]: %s (โควตาคงเหลือ %d)", p.Name(), state, p.Budget().Remaining())
 	}
 
 	// อุ่นดัชนีลีก (ULID -> apiId) ตอนเปิดเครื่อง ไม่ให้ไปหน่วงหน้าแรกครั้งแรก
@@ -531,7 +530,7 @@ func initProviders() {
 		for _, p := range providerChain {
 			if g, ok := p.(*GoalProvider); ok && g.Enabled() {
 				if err := g.ensureLeagueIndex(); err != nil {
-					log.Printf("ℹ️ warm league index: %v", err)
+					logInfof("ℹ️ warm league index: %v", err)
 				}
 			}
 		}
@@ -628,7 +627,7 @@ func fetchMatchesFromProviders(bangkokDate string) ([]byte, string, bool) {
 		}
 		matches, err := p.FixturesForDate(bangkokDate)
 		if err != nil {
-			log.Printf("⚠️ %s FixturesForDate error: %v", p.Name(), err)
+			logInfof("⚠️ %s FixturesForDate error: %v", p.Name(), err)
 			continue
 		}
 		if len(matches) == 0 {
@@ -711,7 +710,7 @@ func fetchLeagueFromProviders(kind, leagueID string) ([]byte, string, bool) {
 		}
 		data, err := lp.LeagueData(kind, leagueID)
 		if err != nil {
-			log.Printf("⚠️ %s LeagueData(%q, %s): %v", p.Name(), kind, leagueID, err)
+			logInfof("⚠️ %s LeagueData(%q, %s): %v", p.Name(), kind, leagueID, err)
 			continue
 		}
 		if len(data) > 0 {
@@ -744,7 +743,7 @@ func fetchTeamFromProviders(kind, teamID string) ([]byte, string, bool) {
 		}
 		data, err := tp.TeamData(kind, teamID)
 		if err != nil {
-			log.Printf("⚠️ %s TeamData(%q, %s): %v", p.Name(), kind, teamID, err)
+			logInfof("⚠️ %s TeamData(%q, %s): %v", p.Name(), kind, teamID, err)
 			continue
 		}
 		if len(data) > 0 {

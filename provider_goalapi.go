@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"sort"
 	"strconv"
@@ -497,7 +496,7 @@ func (p *GoalProvider) FixturesForDate(bangkokDate string) ([]RealMatch, error) 
 	p.mu.Unlock()
 
 	if err := p.ensureLeagueIndex(); err != nil {
-		log.Printf("ℹ️ goalapi league index: %v", err)
+		logInfof("ℹ️ goalapi league index: %v", err)
 	}
 
 	start, end := bangkokDayWindow(dateKey)

@@ -1,8 +1,7 @@
-﻿package main
+package main
 
 import (
 	"encoding/json"
-	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -112,7 +111,7 @@ func (h *LiveHub) Run() {
 			h.mu.Lock()
 			h.clients[client] = true
 			h.mu.Unlock()
-			log.Printf("Live Client connected (Total active: %d)", h.ClientCount())
+			logInfof("Live Client connected (Total active: %d)", h.ClientCount())
 		case client := <-h.unregister:
 			h.mu.Lock()
 			if _, ok := h.clients[client]; ok {
@@ -120,7 +119,7 @@ func (h *LiveHub) Run() {
 				close(client.send)
 			}
 			h.mu.Unlock()
-			log.Printf("Live Client disconnected (Total active: %d)", h.ClientCount())
+			logInfof("Live Client disconnected (Total active: %d)", h.ClientCount())
 		case message := <-h.broadcast:
 			// Lock (ไม่ใช่ RLock): บล็อกนี้ delete ออกจาก map —
 			// เดิมถือ RLock แล้วเขียน map ชนกับ ClientCount() ที่ถือ RLock พร้อมกัน
@@ -225,7 +224,7 @@ func (c *ChatClient) readPump() {
 			continue // ข้อความว่างหลัง trim -> ทิ้ง
 		}
 		if masked > 0 {
-			log.Printf("🛡️ chat mod: masked %d bad word(s) in room %s (%s)", masked, c.matchID, c.ip)
+			logInfof("🛡️ chat mod: masked %d bad word(s) in room %s (%s)", masked, c.matchID, c.ip)
 		}
 
 		c.hub.BroadcastToRoom(c.matchID, cleaned)

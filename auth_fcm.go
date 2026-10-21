@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -54,7 +53,7 @@ func getFCMAccessToken() string {
 
 	token, ttl, err := mintGoogleAccessToken(raw)
 	if err != nil {
-		log.Printf("❌ mint FCM access token ล้มเหลว: %v", err)
+		logInfof("❌ mint FCM access token ล้มเหลว: %v", err)
 		return ""
 	}
 	fcmAccessCache.token = token

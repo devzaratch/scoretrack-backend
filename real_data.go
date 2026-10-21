@@ -1,7 +1,6 @@
 package main
 
 import (
-	"log"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -168,15 +167,15 @@ type TSDBPlayerResponse struct {
 }
 
 type TSDBPlayer struct {
-	IDPlayer        string `json:"idPlayer"`
-	STRPlayer       string `json:"strPlayer"`
-	STRTeam         string `json:"strTeam"`
-	IDTeam          string `json:"idTeam"`
-	STRNationality  string `json:"strNationality"`
-	STRPosition     string `json:"strPosition"`
-	STRHeight       string `json:"strHeight"`
-	STRThumb        string `json:"strThumb"`
-	STRCutout       string `json:"strCutout"`
+	IDPlayer         string `json:"idPlayer"`
+	STRPlayer        string `json:"strPlayer"`
+	STRTeam          string `json:"strTeam"`
+	IDTeam           string `json:"idTeam"`
+	STRNationality   string `json:"strNationality"`
+	STRPosition      string `json:"strPosition"`
+	STRHeight        string `json:"strHeight"`
+	STRThumb         string `json:"strThumb"`
+	STRCutout        string `json:"strCutout"`
 	STRDescriptionEN string `json:"strDescriptionEN"`
 }
 
@@ -188,7 +187,7 @@ type cacheEntry struct {
 
 const (
 	tsdbCacheTTL     = 5 * time.Minute // ข้อมูลในแคชอยู่ได้นานแค่ไหน
-	tsdbCacheMaxSize = 500              // จำกัดจำนวน entry กัน memory leak
+	tsdbCacheMaxSize = 500             // จำกัดจำนวน entry กัน memory leak
 )
 
 var (
@@ -209,7 +208,7 @@ func pruneCacheLocked() {
 
 	// ถ้ายังเกินลิมิต ล้างเพิ่มเติมทั้งก้อน (กัน RAM บวมแบบไม่มีขอบเขต)
 	if len(cacheMap) > tsdbCacheMaxSize {
-		log.Printf("⚠️ TSDB cache เกิน %d entry → ล้างแคชทั้งหมด", tsdbCacheMaxSize)
+		logInfof("⚠️ TSDB cache เกิน %d entry → ล้างแคชทั้งหมด", tsdbCacheMaxSize)
 		cacheMap = make(map[string]cacheEntry)
 	}
 }
@@ -488,7 +487,7 @@ func getTSDBLeagueJSON(leagueID string) []byte {
 		tableSource = "thesportsdb"
 		url := fmt.Sprintf("https://www.thesportsdb.com/api/v1/json/3/lookuptable.php?l=%s&s=2024-2025", tsdbLeagueID)
 		body, err := fetchTSDB(url)
-		
+
 		if err == nil {
 			var resp TSDBTableResponse
 			if err := json.Unmarshal(body, &resp); err == nil && len(resp.Table) > 0 {
@@ -528,31 +527,31 @@ func getTSDBLeagueJSON(leagueID string) []byte {
 	//    ต้อง mark ไว้ให้ handleProxy รู้ว่าห้าม cache นาน (ค้าง 10 นาที = ข้อมูลผิด 10 นาที)
 	if len(standingsList) < 10 {
 		tableSource = "hardcoded-stale"
-		log.Printf("⚠️ standings %s: ไม่มีตารางคะแนนจริงเลย -> ใช้ตาราง hardcode ฤดูกาลเก่า (ไม่ cache นาน)", leagueID)
+		logInfof("⚠️ standings %s: ไม่มีตารางคะแนนจริงเลย -> ใช้ตาราง hardcode ฤดูกาลเก่า (ไม่ cache นาน)", leagueID)
 		standingsList = getFull20TeamsStandings(leagueID, leagueName)
 	}
 
 	// ⚽ สร้างแมตช์การแข่งขันสำหรับลีก
 	sampleMatches := []map[string]interface{}{
 		{
-			"id": 1000016463,
-			"time": "2026-08-24T20:00:00Z",
-			"home": map[string]interface{}{"id": 8650, "name": "Liverpool"},
-			"away": map[string]interface{}{"id": 8456, "name": "Manchester City"},
+			"id":     1000016463,
+			"time":   "2026-08-24T20:00:00Z",
+			"home":   map[string]interface{}{"id": 8650, "name": "Liverpool"},
+			"away":   map[string]interface{}{"id": 8456, "name": "Manchester City"},
 			"status": map[string]interface{}{"finished": true, "scoreStr": "2 - 1", "reason": map[string]interface{}{"short": "FT"}},
 		},
 		{
-			"id": 1000016464,
-			"time": "2026-08-24T22:30:00Z",
-			"home": map[string]interface{}{"id": 9825, "name": "Arsenal"},
-			"away": map[string]interface{}{"id": 8455, "name": "Chelsea"},
+			"id":     1000016464,
+			"time":   "2026-08-24T22:30:00Z",
+			"home":   map[string]interface{}{"id": 9825, "name": "Arsenal"},
+			"away":   map[string]interface{}{"id": 8455, "name": "Chelsea"},
 			"status": map[string]interface{}{"finished": true, "scoreStr": "3 - 1", "reason": map[string]interface{}{"short": "FT"}},
 		},
 		{
-			"id": 1000016465,
-			"time": "2026-08-25T19:00:00Z",
-			"home": map[string]interface{}{"id": 8586, "name": "Tottenham"},
-			"away": map[string]interface{}{"id": 10260, "name": "Manchester United"},
+			"id":     1000016465,
+			"time":   "2026-08-25T19:00:00Z",
+			"home":   map[string]interface{}{"id": 8586, "name": "Tottenham"},
+			"away":   map[string]interface{}{"id": 10260, "name": "Manchester United"},
 			"status": map[string]interface{}{"finished": false, "scoreStr": "VS"},
 		},
 	}
@@ -563,7 +562,7 @@ func getTSDBLeagueJSON(leagueID string) []byte {
 	data := map[string]interface{}{
 		// marker ให้ handleProxy เลือก TTL: "hardcoded-stale" = ตาราง hardcode ฤดูกาลเก่า
 		// -> ห้าม cache 10 นาที (ข้อมูลผิดจะค้าง); "rapidapi"/"thesportsdb" = ข้อมูลจริง cache ได้เต็มที่
-		"tableSource":        tableSource,
+		"tableSource":         tableSource,
 		"allAvailableSeasons": []string{"2026/2027", "2025/2026", "2024/2025", "2023/2024", "2022/2023"},
 		"details": map[string]interface{}{
 			"id":                leagueID,
@@ -754,36 +753,36 @@ func getLeagueTransfers(leagueID string) []map[string]interface{} {
 func getLeagueNews(leagueID, leagueName string) []map[string]interface{} {
 	return []map[string]interface{}{
 		{
-			"id": 1,
-			"title": fmt.Sprintf("วิเคราะห์เจาะลึกศึกใหญ่ %s: การต่อสู้ลุ้นแชมป์สุดดุเดือดสัปดาห์นี้", leagueName),
+			"id":       1,
+			"title":    fmt.Sprintf("วิเคราะห์เจาะลึกศึกใหญ่ %s: การต่อสู้ลุ้นแชมป์สุดดุเดือดสัปดาห์นี้", leagueName),
 			"category": leagueName,
-			"time": "1 ชั่วโมงที่แล้ว",
-			"reads": "18.4k",
-			"snippet": "สรุปขุมกำลัง ความพร้อมล่าสุด และสถิติการพบกันของทีมเต็งก่อนลงสนามสุดสัปดาห์นี้",
+			"time":     "1 ชั่วโมงที่แล้ว",
+			"reads":    "18.4k",
+			"snippet":  "สรุปขุมกำลัง ความพร้อมล่าสุด และสถิติการพบกันของทีมเต็งก่อนลงสนามสุดสัปดาห์นี้",
 		},
 		{
-			"id": 2,
-			"title": "สรุปผลการแข่งขันและตารางคะแนนล่าสุด: สโมสรใหญ่ขยับอันดับขับเคี่ยวโควตาถ้วยยุโรป",
+			"id":       2,
+			"title":    "สรุปผลการแข่งขันและตารางคะแนนล่าสุด: สโมสรใหญ่ขยับอันดับขับเคี่ยวโควตาถ้วยยุโรป",
 			"category": "Match Reports",
-			"time": "3 ชั่วโมงที่แล้ว",
-			"reads": "12.9k",
-			"snippet": "สรุปผลการแข่งขันทุกคู่ พร้อมการวิเคราะห์ฟอร์มการเล่นของแต่ละสโมสรหลังจบแมตช์",
+			"time":     "3 ชั่วโมงที่แล้ว",
+			"reads":    "12.9k",
+			"snippet":  "สรุปผลการแข่งขันทุกคู่ พร้อมการวิเคราะห์ฟอร์มการเล่นของแต่ละสโมสรหลังจบแมตช์",
 		},
 		{
-			"id": 3,
-			"title": "อัปเดตตลาดซื้อขายนักเตะ: ตรวจสอบสรุปการดีลย้ายทีมบิ๊กดีลล่าสุดของลีก",
+			"id":       3,
+			"title":    "อัปเดตตลาดซื้อขายนักเตะ: ตรวจสอบสรุปการดีลย้ายทีมบิ๊กดีลล่าสุดของลีก",
 			"category": "Transfers",
-			"time": "6 ชั่วโมงที่แล้ว",
-			"reads": "24.1k",
-			"snippet": "ตลาดซื้อขายนักเตะช่วงคึกคัก สโมสรชั้นนำทุ่มงบดึงดาวดังเสริมทัพลุยศึกฤดูกาลใหม่",
+			"time":     "6 ชั่วโมงที่แล้ว",
+			"reads":    "24.1k",
+			"snippet":  "ตลาดซื้อขายนักเตะช่วงคึกคัก สโมสรชั้นนำทุ่มงบดึงดาวดังเสริมทัพลุยศึกฤดูกาลใหม่",
 		},
 		{
-			"id": 4,
-			"title": "เปิดสถิติดาวซัลโวและจอมแอสซิสต์: ใครคือที่สุดของลีก ณ ชั่วโมงนี้?",
+			"id":       4,
+			"title":    "เปิดสถิติดาวซัลโวและจอมแอสซิสต์: ใครคือที่สุดของลีก ณ ชั่วโมงนี้?",
 			"category": "Player Stats",
-			"time": "12 ชั่วโมงที่แล้ว",
-			"reads": "9.5k",
-			"snippet": "เจาะลึกสถิติส่วนบุคคลของเหล่านักเตะฟอร์มแรงที่มีส่วนร่วมกับประตูมากที่สุด",
+			"time":     "12 ชั่วโมงที่แล้ว",
+			"reads":    "9.5k",
+			"snippet":  "เจาะลึกสถิติส่วนบุคคลของเหล่านักเตะฟอร์มแรงที่มีส่วนร่วมกับประตูมากที่สุด",
 		},
 	}
 }
@@ -852,16 +851,16 @@ func getLeagueCountry(id string) string {
 
 func getFull20TeamsStandings(leagueID, leagueName string) []CalculatedStanding {
 	var teams []struct {
-		id   int
-		name string
+		id                   int
+		name                 string
 		w, d, l, gf, ga, pts int
 	}
 
 	if leagueID == "87" || leagueID == "4335" {
 		// LaLiga
 		teams = []struct {
-			id   int
-			name string
+			id                   int
+			name                 string
 			w, d, l, gf, ga, pts int
 		}{
 			{8634, "Barcelona", 28, 4, 6, 102, 39, 88},
@@ -888,8 +887,8 @@ func getFull20TeamsStandings(leagueID, leagueName string) []CalculatedStanding {
 	} else if leagueID == "54" || leagueID == "4331" {
 		// Bundesliga (18 Teams)
 		teams = []struct {
-			id   int
-			name string
+			id                   int
+			name                 string
 			w, d, l, gf, ga, pts int
 		}{
 			{8178, "Bayer Leverkusen", 28, 6, 0, 89, 24, 90},
@@ -914,8 +913,8 @@ func getFull20TeamsStandings(leagueID, leagueName string) []CalculatedStanding {
 	} else if leagueID == "55" || leagueID == "4332" {
 		// Serie A
 		teams = []struct {
-			id   int
-			name string
+			id                   int
+			name                 string
 			w, d, l, gf, ga, pts int
 		}{
 			{8636, "Inter", 29, 7, 2, 89, 22, 94},
@@ -942,8 +941,8 @@ func getFull20TeamsStandings(leagueID, leagueName string) []CalculatedStanding {
 	} else if leagueID == "53" || leagueID == "4334" {
 		// Ligue 1 (18 Teams)
 		teams = []struct {
-			id   int
-			name string
+			id                   int
+			name                 string
 			w, d, l, gf, ga, pts int
 		}{
 			{9847, "Paris Saint-Germain", 22, 10, 2, 81, 33, 76},
@@ -968,8 +967,8 @@ func getFull20TeamsStandings(leagueID, leagueName string) []CalculatedStanding {
 	} else {
 		// Premier League (Default)
 		teams = []struct {
-			id   int
-			name string
+			id                   int
+			name                 string
 			w, d, l, gf, ga, pts int
 		}{
 			{8650, "Liverpool", 25, 9, 4, 86, 41, 84},
@@ -1018,7 +1017,7 @@ func getFull20TeamsStandings(leagueID, leagueName string) []CalculatedStanding {
 func fetchRapidAPILiveStandings(leagueID string) []CalculatedStanding {
 	apiKey := getEnv("RAPIDAPI_KEY", "")
 	if apiKey == "" {
-		log.Println("⚠️ ข้ามการดึงตารางคะแนนสด: ไม่ได้ตั้งค่า RAPIDAPI_KEY")
+		logInfoln("⚠️ ข้ามการดึงตารางคะแนนสด: ไม่ได้ตั้งค่า RAPIDAPI_KEY")
 		return nil
 	}
 	host := "free-api-live-football-data.p.rapidapi.com"
@@ -1035,12 +1034,12 @@ func fetchRapidAPILiveStandings(leagueID string) []CalculatedStanding {
 	res, err := client.Do(req)
 	if err != nil {
 		// log ทุก fallback ให้เห็นใน log — เดิม return nil เงียบ ตามหาสาเหตุตารางคะแนนไม่ได้
-		log.Printf("ℹ️ standings %s: rapidapi live-football-data ล้มเหลว (network) -> ใช้ fallback ถัดไป: %v", leagueID, err)
+		logInfof("ℹ️ standings %s: rapidapi live-football-data ล้มเหลว (network) -> ใช้ fallback ถัดไป: %v", leagueID, err)
 		return nil
 	}
 	defer res.Body.Close()
 	if res.StatusCode != 200 {
-		log.Printf("ℹ️ standings %s: rapidapi live-football-data คืน %d -> ใช้ fallback ถัดไป", leagueID, res.StatusCode)
+		logInfof("ℹ️ standings %s: rapidapi live-football-data คืน %d -> ใช้ fallback ถัดไป", leagueID, res.StatusCode)
 		return nil
 	}
 	body, _ := io.ReadAll(res.Body)
@@ -1092,7 +1091,7 @@ func fetchRapidAPILiveStandings(leagueID string) []CalculatedStanding {
 		}
 		return list
 	}
-	log.Printf("ℹ️ standings %s: rapidapi ตอบ JSON แต่ไม่มีตารางคะแนน -> ใช้ fallback ถัดไป", leagueID)
+	logInfof("ℹ️ standings %s: rapidapi ตอบ JSON แต่ไม่มีตารางคะแนน -> ใช้ fallback ถัดไป", leagueID)
 	return nil
 }
 

@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/url"
 	"sort"
 	"strconv"
@@ -34,10 +33,10 @@ const (
 var errWSReconnect = fmt.Errorf("ต้องรีเซ็ตชุด subscribe")
 
 type goalWSClock struct {
-	Minute  string `json:"minute"`
-	Elapsed *int   `json:"elapsed"`
+	Minute  string  `json:"minute"`
+	Elapsed *int    `json:"elapsed"`
 	Extra   *string `json:"extra"`
-	Period  string `json:"period"`
+	Period  string  `json:"period"`
 }
 
 type goalWSUpdate struct {
@@ -86,7 +85,7 @@ func (p *GoalProvider) wsLoop() {
 		// WS token ฟรี แต่ยังนับใน budget ของเราเพื่อกันชน circuit breaker
 		if err != nil && strings.Contains(err.Error(), "budget") {
 			if time.Since(lastBudgetLog) > 5*time.Minute {
-				log.Printf("ℹ️ goal WS: ยังไม่ต่อเพราะโควตาไม่พอ -> รอ 5 นาที (%v)", err)
+				logInfof("ℹ️ goal WS: ยังไม่ต่อเพราะโควตาไม่พอ -> รอ 5 นาที (%v)", err)
 				lastBudgetLog = time.Now()
 			}
 			time.Sleep(5 * time.Minute)
@@ -94,7 +93,7 @@ func (p *GoalProvider) wsLoop() {
 			continue
 		}
 		if err != nil {
-			log.Printf("ℹ️ goal WS: session จบ -> %v", err)
+			logInfof("ℹ️ goal WS: session จบ -> %v", err)
 		}
 		if time.Since(start) > 2*time.Minute {
 			backoff = 3 * time.Second
@@ -125,7 +124,7 @@ func (p *GoalProvider) requestResubscribe() {
 				conn.Close()
 				return
 			}
-			log.Printf("ℹ️ goal WS: subscribe เพิ่มไม่สำเร็จ -> %v", err)
+			logInfof("ℹ️ goal WS: subscribe เพิ่มไม่สำเร็จ -> %v", err)
 		}
 	}()
 }
@@ -236,7 +235,7 @@ func (p *GoalProvider) wsHandleMessage(conn *websocket.Conn, raw []byte) error {
 			MaxSubscriptions int    `json:"maxSubscriptions"`
 		}
 		_ = json.Unmarshal(env.Data, &info)
-		log.Printf("🔁 goal WS: เชื่อมต่อสำเร็จ (plan=%s, subscribe ได้ %d คู่)", info.Plan, info.MaxSubscriptions)
+		logInfof("🔁 goal WS: เชื่อมต่อสำเร็จ (plan=%s, subscribe ได้ %d คู่)", info.Plan, info.MaxSubscriptions)
 		return p.wsSyncSubs(conn)
 
 	case "match_update":

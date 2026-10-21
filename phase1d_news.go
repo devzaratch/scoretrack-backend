@@ -1,4 +1,4 @@
-﻿package main
+package main
 
 // Phase 1d — Football news (BBC Sport RSS, free, no key, no quota).
 // Backend fetches the feed at most once per hour, caches in memory,
@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -51,8 +50,8 @@ type newsArticle struct {
 }
 
 type newsCache struct {
-	mu      sync.RWMutex
-	at      time.Time
+	mu       sync.RWMutex
+	at       time.Time
 	articles []newsArticle
 }
 
@@ -76,12 +75,12 @@ func fetchFootballNews() []newsArticle {
 	req.Header.Set("User-Agent", "ScoreTrack/1.0 (+livescore)")
 	resp, err := newsHTTP.Do(req)
 	if err != nil {
-		log.Printf("news fetch failed: %v (serving stale)", err)
+		logInfof("news fetch failed: %v (serving stale)", err)
 		return staleNews()
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("news fetch status %d (serving stale)", resp.StatusCode)
+		logInfof("news fetch status %d (serving stale)", resp.StatusCode)
 		return staleNews()
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
@@ -90,7 +89,7 @@ func fetchFootballNews() []newsArticle {
 	}
 	var feed rssFeed
 	if err := xml.Unmarshal(body, &feed); err != nil {
-		log.Printf("news parse failed: %v", err)
+		logInfof("news parse failed: %v", err)
 		return staleNews()
 	}
 	articles := make([]newsArticle, 0, len(feed.Channel.Items))
