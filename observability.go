@@ -67,6 +67,10 @@ func recordRequest(route string, status int, ms int64) {
 	reqsTotal.Add(1)
 	reqsByStatusClass[statusClassIndex(status)].Add(1)
 
+	// SLO (แผนข้อ 9) — window 5 นาที: global + ราย route
+	sloGlobal.record(status, ms)
+	sloRouteSeries(route).record(status, ms)
+
 	obsMu.Lock()
 	rs := routeStatsByName[route]
 	if rs == nil {
@@ -181,6 +185,7 @@ func recoveryMiddleware() gin.HandlerFunc {
 		defer func() {
 			if r := recover(); r != nil {
 				panicsTotal.Add(1)
+				sloGlobal.recordPanic()
 				logError("panic recovered",
 					"path", sanitizePath(c.Request.URL.Path),
 					"method", c.Request.Method,
@@ -194,6 +199,7 @@ func recoveryMiddleware() gin.HandlerFunc {
 				if route == "" {
 					route = sanitizePath(c.Request.URL.Path)
 				}
+				sloRouteSeries(route).recordPanic()
 				recordRequest(route, http.StatusInternalServerError, 0)
 				c.AbortWithStatus(http.StatusInternalServerError)
 			}

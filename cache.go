@@ -34,12 +34,13 @@ func cacheBackendName() string {
 }
 
 // cacheGet คืนข้อมูลจาก cache ถ้ามี (Redis ก่อน ค่อย memory)
-// คืน ([]byte, source, found) + นับ hit/miss ให้ metrics (แผนข้อ 9)
+// คืน ([]byte, source, found) + นับ hit/miss ให้ metrics (แผนข้อ 9) + จำอายุข้อมูล (freshness)
 func cacheGet(key string) ([]byte, string, bool) {
 	if rdb != nil {
 		cached, err := rdb.Get(context.Background(), key).Result()
 		if err == nil && cached != "" {
 			cacheHitsTotal.Add(1)
+			noteCacheHit(key)
 			return []byte(cached), "Redis-Cache", true
 		}
 		cacheMissesTotal.Add(1)
@@ -47,6 +48,7 @@ func cacheGet(key string) ([]byte, string, bool) {
 	}
 	if data, found := memoryCache.Get(key); found {
 		cacheHitsTotal.Add(1)
+		noteCacheHit(key)
 		return data, "In-Memory-Cache", true
 	}
 	cacheMissesTotal.Add(1)
@@ -55,6 +57,7 @@ func cacheGet(key string) ([]byte, string, bool) {
 
 // cacheSet เก็บข้อมูลลง cache (Redis ถ้ามี ไม่งั้น memory)
 func cacheSet(key string, data []byte, ttl time.Duration) {
+	noteCacheSet(key)
 	if rdb != nil {
 		rdb.Set(context.Background(), key, string(data), ttl)
 		return

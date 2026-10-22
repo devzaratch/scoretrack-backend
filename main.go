@@ -151,6 +151,13 @@ func main() {
 	// 2. Start Live Ticker Engine
 	go startLiveTicker()
 
+	// 3. SLO + alerting + synthetic monitoring (แผนข้อ 9)
+	//    - ประเมิน availability/latency/freshness/provider/โควตา ทุก 60 วิ
+	//    - แจ้งเตือน Telegram เมื่อสถานะเปลี่ยน (ยังไม่ได้ตั้ง env = log อย่างเดียว)
+	//    - ยิงตรวจ endpoint ของตัวเองเป็นระยะ (healthz + sources)
+	go startSLOLoop()
+	go startSyntheticMonitor()
+
 	// gin.New + middleware ของเราเอง (แผนข้อ 9): gin.Default() = [GIN] free text
 	// logger + Recovery ไม่มี field — ตอนนี้ request log เป็น JSON ทุกบรรทัด
 	// (observability.go) + panic เก็บ stack ลง structured log

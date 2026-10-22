@@ -171,5 +171,6 @@ func handleAdminMetrics(c *gin.Context) {
 		"pageviews": gin.H{"total": pvTotal, "paths": pageviews},
 		"vitals":    vitals,                  // avg หน่วย: CLS=จุด ที่เหลือ=มิลลิวินาที
 		"server":    snapshotServerMetrics(), // แผนข้อ 9: requests/latency/cache/ws (observability.go)
+		"slo":       snapshotSLO(),           // แผนข้อ 9: SLO/alerts/freshness/providers/synthetic (slo.go)
 	})
 }
