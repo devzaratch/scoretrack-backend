@@ -27,6 +27,7 @@ type StoreData struct {
 type PersistentDB struct {
 	data     StoreData
 	filePath string
+	store    Storage // ชั้นเก็บข้อมูลถาวร (ไฟล์/Postgres) — แผนข้อ 1
 	mu       sync.RWMutex
 	dirty    bool
 
@@ -59,42 +60,32 @@ func InitDB() *PersistentDB {
 		},
 	}
 
-	// Load existing data from file if present
-	if fileData, err := os.ReadFile(dbPath); err == nil && len(fileData) > 0 {
-		var loaded StoreData
-		if err := json.Unmarshal(fileData, &loaded); err == nil {
-			if loaded.ChatMessages != nil {
-				db.data.ChatMessages = loaded.ChatMessages
-			}
-			if loaded.UserFavorites != nil {
-				db.data.UserFavorites = loaded.UserFavorites
-			}
-			if loaded.UserSessions != nil {
-				db.data.UserSessions = loaded.UserSessions
-			}
-			if loaded.MatchSubscriptions != nil {
-				db.data.MatchSubscriptions = loaded.MatchSubscriptions
-			}
-			if loaded.FCMTokens != nil {
-				db.data.FCMTokens = loaded.FCMTokens
-			}
-			if loaded.Predictions != nil {
-				db.data.Predictions = loaded.Predictions
-			}
-			if loaded.UserNotificationPrefs != nil {
-				db.data.UserNotificationPrefs = loaded.UserNotificationPrefs
-			}
-			if loaded.Achievements != nil {
-				db.data.Achievements = loaded.Achievements
-			}
-			if loaded.APIKeys != nil {
-				if loaded.UserInterests != nil {
-					db.data.UserInterests = loaded.UserInterests
+	// แผนข้อ 1: เลือกที่เก็บข้อมูล (Postgres ถ้าตั้ง DATA_BACKEND=postgres, ไม่งั้นไฟล์แบบเดิม)
+	store, storeErr := newStorage()
+	if storeErr != nil {
+		logInfof("⚠️ เปิด storage ไม่สำเร็จ (%v) — ใช้ไฟล์แทน", storeErr)
+		store = newFileStorage(dbPath)
+	}
+	db.store = store
+
+	// Load existing data from storage
+	if loaded, err := db.storage().Load(); err == nil {
+		db.data = loaded
+		logInfof("📦 Loaded persistent database from %s", db.storage().Name())
+
+		// แผนข้อ 1: ครั้งแรกที่ย้ายมาใช้ DB — ถ้า DB ยังว่างแต่มีไฟล์เดิมอยู่ ให้นำเข้าไป
+		if isEmptyStore(db.data) {
+			if legacy, lerr := os.ReadFile(dbPath); lerr == nil && len(legacy) > 0 {
+				var old StoreData
+				if json.Unmarshal(legacy, &old) == nil {
+					db.data = mergeLoaded(old)
+					db.dirty = true
+					logInfof("📥 นำเข้าข้อมูลจาก %s เข้า %s (ครั้งเดียว)", dbPath, db.storage().Name())
 				}
-				db.data.APIKeys = loaded.APIKeys
 			}
-			logInfof("📦 Loaded persistent database from %s", dbPath)
 		}
+	} else {
+		logInfof("⚠️ อ่านข้อมูลไม่สำเร็จ: %v", err)
 	}
 
 	// กู้ข้อมูลจาก Redis ถ้า local ว่าง (Render ดิสก์ ephemeral — หายตอน restart)
@@ -114,6 +105,15 @@ func InitDB() *PersistentDB {
 	return db
 }
 
+// storage — คืน storage ที่ใช้จริง (ถ้ายังไม่ได้กำหนด = ใช้ไฟล์ตาม filePath)
+// ป้องกัน nil pointer เวลาโค้ดสร้าง PersistentDB เอง (เช่นในเทสต์)
+func (db *PersistentDB) storage() Storage {
+	if db.store != nil {
+		return db.store
+	}
+	return newFileStorage(db.filePath)
+}
+
 func (db *PersistentDB) syncWorker(interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -125,15 +125,14 @@ func (db *PersistentDB) syncWorker(interval time.Duration) {
 			continue
 		}
 
-		jsonData, err := json.MarshalIndent(db.data, "", "  ")
-		if err == nil {
-			tmpPath := db.filePath + ".tmp"
-			if err := os.WriteFile(tmpPath, jsonData, 0644); err == nil {
-				os.Rename(tmpPath, db.filePath)
-				db.dirty = false
-				// สำรอง snapshot ขึ้น Redis (best-effort, throttle ในตัว)
+		// แผนข้อ 1: เขียนผ่าน Storage (ไฟล์/Postgres) — Redis snapshot ยังทำเป็น fallback
+		if err := db.storage().Save(db.data); err == nil {
+			db.dirty = false
+			if jsonData, err := json.Marshal(db.data); err == nil {
 				db.maybePushSnapshot(jsonData)
 			}
+		} else {
+			logInfof("⚠️ flush ข้อมูลไม่สำเร็จ: %v", err)
 		}
 		db.mu.Unlock()
 	}
@@ -769,14 +768,10 @@ func (db *PersistentDB) FlushNow() error {
 		return err
 	}
 
-	tmpPath := db.filePath + ".tmp"
-	if err := os.WriteFile(tmpPath, jsonData, 0644); err != nil {
+	// แผนข้อ 1: เขียนผ่าน Storage (ไฟล์/Postgres)
+	if err := db.storage().Save(db.data); err != nil {
 		return err
 	}
-	if err := os.Rename(tmpPath, db.filePath); err != nil {
-		return err
-	}
-
 	db.dirty = false
 	logInfof("💾 บันทึกข้อมูลลงดิสก์ครบก่อนปิดเซิร์ฟเวอร์แล้ว (%s)", db.filePath)
 
