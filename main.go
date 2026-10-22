@@ -901,6 +901,16 @@ func handleSavePrediction(c *gin.Context) {
 		return
 	}
 
+	// แผนข้อ 5: ปิดรอบทาย — ถ้าแมตช์เริ่มแล้วทายไม่ได้ (กันคนแก้ทายหลังเขียนไม่ได้)
+	if started, status := matchHasStarted(body.MatchID); started {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":        "ปิดรอบทายผลแล้ว — แมตช์เริ่มไปแล้ว",
+			"match_status": status,
+			"closed":       true,
+		})
+		return
+	}
+
 	userKey := resolveUserKey(c)
 	GlobalDB.SavePrediction(userKey, body.MatchID, body.Prediction)
 

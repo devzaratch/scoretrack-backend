@@ -3,7 +3,9 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -168,19 +170,28 @@ func computeLeaderboard() []LeaderboardEntry {
 }
 
 // userPoints คำนวณคะแนนของ user เดียว (ใช้หน้า my predictions)
+// แผนข้อ 5: เพิ่ม streak (ทายถูกติดกันกี่ครั้ง) + จำนวนที่ผิด + ความแม่นยำ
 func userPoints(userID string) map[string]interface{} {
 	if GlobalDB == nil {
-		return map[string]interface{}{"points": 0}
+		return map[string]interface{}{"points": 0, "streak": 0, "exact_hits": 0, "correct_hits": 0, "wrong": 0, "finished": 0, "predictions": 0, "accuracy": 0, "updated_at": fmt.Sprintf("%d", time.Now().Unix())}
 	}
 	preds := GlobalDB.GetPredictionsByUser(userID)
 	points, exact, correct, finished := 0, 0, 0, 0
+
+	// เก็บผลของแต่ละแมตช์ไว้ (พร้อมเวลาที่ทาย) เพื่อหา streak เรียงตามลำดับเวลา
+	type scored struct {
+		points   int
+		created  int64
+		finished bool
+	}
+	results := make([]scored, 0, len(preds))
 	for matchID, predRaw := range preds {
 		pred, ok := predRaw.(map[string]interface{})
 		if !ok {
 			continue
 		}
-		p, ok := scorePrediction(pred, getMatchResult(matchID))
-		if !ok {
+		p, done := scorePrediction(pred, getMatchResult(matchID))
+		if !done {
 			continue
 		}
 		finished++
@@ -190,13 +201,80 @@ func userPoints(userID string) map[string]interface{} {
 		} else if p == 1 {
 			correct++
 		}
+		results = append(results, scored{points: p, created: predictionCreatedAt(pred), finished: true})
 	}
+
+	// streak = ทายถูกติดกันจากล่าสุด (เรียงตามเวลาที่ทาย — ใกล้เคียงลำดับเวลาแมตช์)
+	streak := 0
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].created > results[j].created
+	})
+	for _, r := range results {
+		if r.points > 0 {
+			streak++
+			continue
+		}
+		break
+	}
+
+	accuracy := 0.0
+	if finished > 0 {
+		accuracy = float64(exact+correct) / float64(finished) * 100
+	}
+
 	return map[string]interface{}{
 		"points":       points,
 		"exact_hits":   exact,
 		"correct_hits": correct,
+		"wrong":        finished - exact - correct,
 		"finished":     finished,
 		"predictions":  len(preds),
+		"streak":       streak,
+		"accuracy":     math.Round(accuracy*10) / 10,
 		"updated_at":   fmt.Sprintf("%d", time.Now().Unix()),
 	}
+}
+
+// predictionCreatedAt — เวลาที่ผู้ใช้ทาย (ใช้เรียงลำดับหา streak)
+func predictionCreatedAt(pred map[string]interface{}) int64 {
+	if v, ok := pred["createdAt"].(string); ok {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			return t.Unix()
+		}
+	}
+	return 0
+}
+
+// matchHasStarted — แมตช์เริ่มไปหรือยัง (ใช้ปิดรอบทายผล)
+// ดึงจาก cache ที่มีอยู่แล้ว (ไม่ยิง provider เพิ่ม) — ถ้าไม่มีข้อมูล = ยังไม่เริ่ม
+// (กันบล็อกการทายผิดวันที่ยังไม่มีข้อมูลใน cache)
+func matchHasStarted(matchID string) (bool, string) {
+	data, _, found := cacheGet("match:" + matchID)
+	if !found || len(data) == 0 {
+		return false, ""
+	}
+	var probe struct {
+		Header struct {
+			Status struct {
+				Started   bool   `json:"started"`
+				Finished  bool   `json:"finished"`
+				StatusStr string `json:"statusStr"`
+			} `json:"status"`
+		} `json:"header"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return false, ""
+	}
+	if probe.Header.Status.Finished {
+		return true, "finished"
+	}
+	if probe.Header.Status.Started {
+		return true, "started"
+	}
+	st := strings.ToUpper(probe.Status)
+	if st != "" && st != "NS" && st != "NOT_STARTED" && st != "SCHEDULED" && st != "POSTPONED" {
+		return true, st
+	}
+	return false, st
 }
