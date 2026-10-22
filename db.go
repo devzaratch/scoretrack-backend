@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -18,6 +20,7 @@ type StoreData struct {
 	Predictions           map[string]map[string]interface{}   `json:"predictions"`        // userID -> matchID -> prediction data
 	UserNotificationPrefs map[string]map[string]interface{}   `json:"notification_prefs"` // userID -> preferences
 	Achievements          map[string][]string                 `json:"achievements"`       // userID -> list of unlocked achievement IDs
+	APIKeys               map[string]APIKeyRecord             `json:"api_keys"`           // api key -> record (แผนข้อ 7: public API)
 }
 
 type PersistentDB struct {
@@ -51,6 +54,7 @@ func InitDB() *PersistentDB {
 			Predictions:           make(map[string]map[string]interface{}),
 			UserNotificationPrefs: make(map[string]map[string]interface{}),
 			Achievements:          make(map[string][]string),
+			APIKeys:               make(map[string]APIKeyRecord),
 		},
 	}
 
@@ -81,6 +85,9 @@ func InitDB() *PersistentDB {
 			}
 			if loaded.Achievements != nil {
 				db.data.Achievements = loaded.Achievements
+			}
+			if loaded.APIKeys != nil {
+				db.data.APIKeys = loaded.APIKeys
 			}
 			logInfof("📦 Loaded persistent database from %s", dbPath)
 		}
@@ -218,6 +225,89 @@ func (db *PersistentDB) DeleteUserSession(token string) {
 		delete(db.data.UserSessions, token)
 		db.dirty = true
 	}
+}
+
+// SaveAPIKey — บันทึก/อัปเดต API key (แผนข้อ 7)
+func (db *PersistentDB) SaveAPIKey(key string, rec APIKeyRecord) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	if db.data.APIKeys == nil {
+		db.data.APIKeys = make(map[string]APIKeyRecord)
+	}
+	db.data.APIKeys[key] = rec
+	db.dirty = true
+}
+
+// GetAPIKey — ดึงข้อมูล key (มี = ใช้ได้)
+func (db *PersistentDB) GetAPIKey(key string) (APIKeyRecord, bool) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	rec, ok := db.data.APIKeys[key]
+	return rec, ok
+}
+
+// ListAPIKeys — รายการ key ทั้งหมด (เรียงตามเวลาที่ใช้ล่าสุด)
+func (db *PersistentDB) ListAPIKeys() []APIKeyRecord {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	out := make([]APIKeyRecord, 0, len(db.data.APIKeys))
+	for _, rec := range db.data.APIKeys {
+		out = append(out, rec)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].LastUsedAt != out[j].LastUsedAt {
+			return out[i].LastUsedAt > out[j].LastUsedAt
+		}
+		return out[i].CreatedAt > out[j].CreatedAt
+	})
+	return out
+}
+
+// ListAPIKeyViews — เหมือน ListAPIKeys แต่เติม key_id (prefix) และไม่คืนค่า key เต็ม
+func (db *PersistentDB) ListAPIKeyViews() []APIKeyView {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	out := make([]APIKeyView, 0, len(db.data.APIKeys))
+	for key, rec := range db.data.APIKeys {
+		out = append(out, APIKeyView{APIKeyRecord: rec, KeyID: apiKeyPrefix(key)})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].LastUsedAt != out[j].LastUsedAt {
+			return out[i].LastUsedAt > out[j].LastUsedAt
+		}
+		return out[i].CreatedAt > out[j].CreatedAt
+	})
+	return out
+}
+
+// FindAPIKeyByPrefix — หา key เต็มจาก prefix (สำหรับเพิกถอนโดยไม่ต้องเก็บ key เต็มไว้ในหน้า admin)
+func (db *PersistentDB) FindAPIKeyByPrefix(prefix string) string {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	for key := range db.data.APIKeys {
+		if strings.HasPrefix(key, prefix) {
+			return key
+		}
+	}
+	return ""
+}
+
+// DeleteAPIKey — เพิกถอน key (ลบถาวร)
+func (db *PersistentDB) DeleteAPIKey(key string) bool {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	if _, ok := db.data.APIKeys[key]; !ok {
+		return false
+	}
+	delete(db.data.APIKeys, key)
+	db.dirty = true
+	return true
 }
 
 // GetUserAchievements — รายการ achievement ที่ปลดล็อกของผู้ใช้

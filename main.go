@@ -386,6 +386,25 @@ func main() {
 	nestedApiGroup := r.Group("/api/api")
 	setupRoutes(nestedApiGroup)
 
+	// Public API v1 (แผนข้อ 7) — ใช้ API key + โควตาแยกต่อ key
+	// endpoint เดียวกับของเว็บ (แต่คนละ path + ต้องยืนยันด้วย key)
+	v1 := r.Group("/api/v1")
+	{
+		v1.GET("/status", handleAPIStatus) // ไม่ต้อง key (เช็คว่า service ใครไหน) — แต่จะไม่บอกอะไรมาก
+	}
+	v1Auth := v1.Group("", apiKeyAuth())
+	{
+		v1Auth.GET("/matches", matchesHandler)
+		v1Auth.GET("/match/:id", matchDetailsHandler)
+		v1Auth.GET("/league/:id", leagueHandler)
+		v1Auth.GET("/league/:id/table", leagueTableHandler)
+		v1Auth.GET("/team/:id", teamHandler)
+		v1Auth.GET("/team/:id/squad", teamSquadHandler)
+		v1Auth.GET("/player/:id", playerHandler)
+		v1Auth.GET("/news", newsHandler)
+		v1Auth.GET("/calendar", handleCalendar)
+	}
+
 	port := getEnv("PORT", "8080")
 	srv := &http.Server{
 		Addr:              ":" + port,
