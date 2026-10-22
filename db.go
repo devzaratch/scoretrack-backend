@@ -220,6 +220,83 @@ func (db *PersistentDB) DeleteUserSession(token string) {
 	}
 }
 
+// GetUserAchievements — รายการ achievement ที่ปลดล็อกของผู้ใช้
+func (db *PersistentDB) GetUserAchievements(userID string) []string {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	return db.data.Achievements[userID]
+}
+
+// GetSessionSubByUser — หา google sub ของ user key (user:g:<sub>) จาก session ที่ยังมี
+func (db *PersistentDB) GetSessionSubByUser(userKey string) string {
+	if len(userKey) < len("user:g:") || userKey[:len("user:g:")] != "user:g:" {
+		return ""
+	}
+	sub := userKey[len("user:g:"):]
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	for token, s := range db.data.UserSessions {
+		if s == sub {
+			return sub
+		}
+		_ = token
+	}
+	return ""
+}
+
+// DeleteUserSessionsBySub — ลบทุก session ที่ผูกกับ google sub นี้
+func (db *PersistentDB) DeleteUserSessionsBySub(sub string) int {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	n := 0
+	for token, s := range db.data.UserSessions {
+		if s == sub {
+			delete(db.data.UserSessions, token)
+			n++
+		}
+	}
+	if n > 0 {
+		db.dirty = true
+	}
+	return n
+}
+
+// DeleteUserData — ลบข้อมูลทั้งหมดของผู้ใช้ 1 คน (PDPA: right to erasure)
+// คืนจำนวนรายการที่ลบในแต่ละประเภท เพื่อรายงานกลับให้ผู้ใช้
+func (db *PersistentDB) DeleteUserData(userID string) map[string]interface{} {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	removed := map[string]interface{}{
+		"favorites":          0,
+		"predictions":        0,
+		"notification_prefs": 0,
+		"achievements":       0,
+	}
+
+	if favs, ok := db.data.UserFavorites[userID]; ok {
+		removed["favorites"] = len(favs)
+		delete(db.data.UserFavorites, userID)
+	}
+	if preds, ok := db.data.Predictions[userID]; ok {
+		removed["predictions"] = len(preds)
+		delete(db.data.Predictions, userID)
+	}
+	if _, ok := db.data.UserNotificationPrefs[userID]; ok {
+		removed["notification_prefs"] = 1
+		delete(db.data.UserNotificationPrefs, userID)
+	}
+	if ach, ok := db.data.Achievements[userID]; ok {
+		removed["achievements"] = len(ach)
+		delete(db.data.Achievements, userID)
+	}
+
+	db.dirty = true
+	return removed
+}
+
 // --------------------------------------------------
 // Match FCM Subscriptions Persistence
 // --------------------------------------------------

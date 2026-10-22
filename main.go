@@ -356,6 +356,10 @@ func main() {
 		rg.POST("/user/fcm", rateLimitMiddleware("user-write", RLUserWrite, time.Minute), handleFCMRegister)
 		rg.POST("/user/match-subscribe", rateLimitMiddleware("user-write", RLUserWrite, time.Minute), handleMatchSubscribe)
 
+		// PDPA (แผนข้อ 10): สิทธิเข้าถึง/ลบข้อมูลส่วนบุคคลของตัวเอง
+		rg.GET("/user/data", handleUserDataExport)
+		rg.DELETE("/user/account", handleDeleteAccount)
+
 		// Predictions (leaderboard cached 2min, save 30/min)
 		rg.GET("/predictions/leaderboard", handlePredictionsLeaderboard)
 		rg.POST("/predictions/save", rateLimitMiddleware("prediction", RLPrediction, time.Minute), handleSavePrediction)
