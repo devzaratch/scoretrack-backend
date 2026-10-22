@@ -921,6 +921,7 @@ func snapshotSLO() map[string]interface{} {
 		"synthetic":  snapshotSynthetic(),
 		"providers":  providers,
 		"alerts":     snapshotAlerts(),
+		"warmup":     snapshotWarmup(),
 		"targets": map[string]interface{}{
 			"availability":  1 - sloFloatEnv("SLO_ERROR_RATE_CRIT", 0.10),
 			"p95_ms":        sloIntEnv("SLO_P95_WARN_MS", 2000),

@@ -158,6 +158,9 @@ func main() {
 	go startSLOLoop()
 	go startSyntheticMonitor()
 
+	// 4. Cache warmer (แผนข้อ 2) — เติม cache เป็นระยะ + กัน Render cold start
+	go startCacheWarmer()
+
 	// gin.New + middleware ของเราเอง (แผนข้อ 9): gin.Default() = [GIN] free text
 	// logger + Recovery ไม่มี field — ตอนนี้ request log เป็น JSON ทุกบรรทัด
 	// (observability.go) + panic เก็บ stack ลง structured log
