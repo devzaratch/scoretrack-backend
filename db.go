@@ -21,6 +21,7 @@ type StoreData struct {
 	UserNotificationPrefs map[string]map[string]interface{}   `json:"notification_prefs"` // userID -> preferences
 	Achievements          map[string][]string                 `json:"achievements"`       // userID -> list of unlocked achievement IDs
 	APIKeys               map[string]APIKeyRecord             `json:"api_keys"`           // api key -> record (แผนข้อ 7: public API)
+	UserInterests         map[string][]string                 `json:"user_interests"`     // userID -> ["league:47", "team:arsenal fc"] (แผนข้อ 4)
 }
 
 type PersistentDB struct {
@@ -87,6 +88,9 @@ func InitDB() *PersistentDB {
 				db.data.Achievements = loaded.Achievements
 			}
 			if loaded.APIKeys != nil {
+				if loaded.UserInterests != nil {
+					db.data.UserInterests = loaded.UserInterests
+				}
 				db.data.APIKeys = loaded.APIKeys
 			}
 			logInfof("📦 Loaded persistent database from %s", dbPath)
@@ -308,6 +312,45 @@ func (db *PersistentDB) DeleteAPIKey(key string) bool {
 	delete(db.data.APIKeys, key)
 	db.dirty = true
 	return true
+}
+
+// GetUserInterests — รายการความสนใจของผู้ใช้ (เรียงคงที่)
+func (db *PersistentDB) GetUserInterests(userID string) []string {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	src := db.data.UserInterests[userID]
+	out := make([]string, 0, len(src))
+	for _, k := range src {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// SetUserInterest — ติดตาม/เลิกติดตาม (คืนรายการล่าสุดของผู้ใช้)
+func (db *PersistentDB) SetUserInterest(userID string, key string, follow bool) []string {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	if db.data.UserInterests == nil {
+		db.data.UserInterests = make(map[string][]string)
+	}
+	current := db.data.UserInterests[userID]
+
+	set := make(map[string]bool, len(current))
+	for _, k := range current {
+		set[k] = true
+	}
+	if follow {
+		set[key] = true
+	} else {
+		delete(set, key)
+	}
+	next := sortedInterests(set)
+	db.data.UserInterests[userID] = next
+	db.dirty = true
+	return next
 }
 
 // GetUserAchievements — รายการ achievement ที่ปลดล็อกของผู้ใช้

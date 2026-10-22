@@ -356,6 +356,10 @@ func main() {
 		rg.POST("/user/fcm", rateLimitMiddleware("user-write", RLUserWrite, time.Minute), handleFCMRegister)
 		rg.POST("/user/match-subscribe", rateLimitMiddleware("user-write", RLUserWrite, time.Minute), handleMatchSubscribe)
 
+		// ความสนใจ (ติดตามทีม/ลีก) — ใช้จัดลำดับหน้าแรกให้เป็นของผู้ใช้ (แผนข้อ 4)
+		rg.GET("/user/interests", handleUserInterests)
+		rg.POST("/user/interests", rateLimitMiddleware("user-write", RLUserWrite, time.Minute), handleUserInterestToggle)
+
 		// PDPA (แผนข้อ 10): สิทธิเข้าถึง/ลบข้อมูลส่วนบุคคลของตัวเอง
 		rg.GET("/user/data", handleUserDataExport)
 		rg.DELETE("/user/account", handleDeleteAccount)
