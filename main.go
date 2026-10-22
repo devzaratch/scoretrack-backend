@@ -217,7 +217,7 @@ func main() {
 		},
 		AllowMethods:     []string{"GET", "POST", "OPTIONS", "PUT", "DELETE"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With", "X-Admin-Token"},
-		ExposeHeaders:    []string{"Content-Length", "X-Cache", "X-Data-Source"},
+		ExposeHeaders:    []string{"Content-Length", "X-Cache", "X-Cache-Backend", "X-Data-Source", "X-Data-Fetched-At", "X-Data-Age-Seconds", "X-Data-Stale"},
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
 	}))
@@ -1192,7 +1192,10 @@ func handleProxy(cacheKeyPattern string, ttl time.Duration, targetURLBuilder fun
 		// 1. Check Redis Cache or In-Memory Cache Fallback
 		if cachedData, cacheSource, found := cacheGet(cacheKey); found {
 			c.Header("X-Cache", "HIT")
-			c.Header("X-Data-Source", cacheSource)
+			// เดิมส่งชื่อ cache backend ใส่ X-Data-Source (ทำให้เข้าใจผิดว่าเป็นแหล่งข้อมูล)
+			// -> แยกเป็น X-Cache-Backend + X-Data-Source (แหล่งข้อมูลจริง) + อายุข้อมูล
+			c.Header("X-Cache-Backend", cacheSource)
+			setProvenanceHeadersForKey(c, cacheKey, "cache")
 			c.Data(http.StatusOK, "application/json; charset=utf-8", cachedData)
 			return
 		}
@@ -1274,6 +1277,7 @@ func handleProxy(cacheKeyPattern string, ttl time.Duration, targetURLBuilder fun
 		if sourceTag == "cache-recheck" {
 			c.Header("X-Cache", "HIT")
 			c.Header("X-Data-Source", "singleflight")
+			setProvenanceHeadersForKey(c, cacheKey, "singleflight")
 			c.Data(http.StatusOK, "application/json; charset=utf-8", data)
 			return
 		}
@@ -1348,8 +1352,11 @@ func handleProxy(cacheKeyPattern string, ttl time.Duration, targetURLBuilder fun
 			}
 			cacheSet(cacheKey, data, cacheTTL)
 
+			// แผนข้อ 3: จำที่มาของข้อมูล (แหล่ง + เวลาที่ดึง) แล้วส่งเป็น header
+			// ให้ผู้ใช้/ฝั่ง web รู้ว่าข้อมูลสดแค่ไหน มาจาก provider ไหน
+			noteProvenance(cacheKey, sourceTag)
 			c.Header("X-Cache", "MISS")
-			c.Header("X-Data-Source", sourceTag)
+			setProvenanceHeaders(c, sourceTag, time.Now())
 			c.Data(http.StatusOK, "application/json; charset=utf-8", data)
 			return
 		}
