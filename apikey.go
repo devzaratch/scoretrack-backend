@@ -13,6 +13,7 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
 	"strconv"
@@ -36,6 +37,17 @@ type APIKeyRecord struct {
 	// นับต่อนาที (ในหน่วยความจริง ไม่ต้อง persist ทุกครั้ง)
 	MinuteCalls  int   `json:"minute_calls"`
 	MinuteWindow int64 `json:"minute_window"`
+	// KeyPrefix = 16 ตัวแรกของ key (sk_live_xxxx...) เก็บไว้แสดงในหน้า admin
+	// + ใช้ค้นหาตอนเพิกถอน — key เต็มไม่ถูกเก็บในฐานข้อมูลแล้ว (เก็บเป็น sha256)
+	KeyPrefix string `json:"key_prefix,omitempty"`
+}
+
+// hashAPIKey — เก็บ key ใน DB เป็น sha256 (ไม่ใช่ค่าเต็ม)
+// ทำไม: ไฟล์ store.json หลุด = คนเอา key ไปเรียก API ได้ทันที ถ้าเก็บ plaintext
+// ตอนนี้หลุดไปก็ใช้ไม่ได้ (มีแต่ hash ที่ brute force ไม่ได้)
+func hashAPIKey(key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(sum[:])
 }
 
 // apiKeyPrefix — id สั้นของ key (ใช้แสดงในหน้า admin + ใช้เพิกถอน)
@@ -261,12 +273,14 @@ func handleAPIKeyRevoke(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "ฐานข้อมูลไม่พร้อม"})
 		return
 	}
-	full := GlobalDB.FindAPIKeyByPrefix(keyID)
-	if full == "" {
+	// เพิกถอนด้วย prefix ที่แสดงในหน้า admin (ค่าเต็มไม่ถูกเก็บใน DB แล้ว —
+	// เก็บเป็น sha256 -> ค้น hash ที่ตรงกับ prefix แล้วลบ)
+	hash := GlobalDB.FindAPIKeyHashByPrefix(keyID)
+	if hash == "" {
 		c.JSON(http.StatusNotFound, gin.H{"error": "ไม่พบ key"})
 		return
 	}
-	if !GlobalDB.DeleteAPIKey(full) {
+	if !GlobalDB.DeleteAPIKeyByHash(hash) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "ไม่พบ key"})
 		return
 	}

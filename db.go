@@ -91,6 +91,12 @@ func InitDB() *PersistentDB {
 	// กู้ข้อมูลจาก Redis ถ้า local ว่าง (Render ดิสก์ ephemeral — หายตอน restart)
 	db.restoreFromSnapshot()
 
+	// ความปลอดภัย (แผนข้อ 2): ย้าย API key ที่ยังเก็บ plaintext ใน map
+	// ไปเป็น sha256 (รวมของที่เพิ่งกู้จาก snapshot ด้วย)
+	if n := db.migrateAPIKeysToHashed(); n > 0 {
+		logInfof("🔒 ย้าย API key %d รายการเป็น sha256 (ไม่เก็บค่าเต็มใน DB แล้ว)", n)
+	}
+
 	// บังคับ dirty ตั้งแต่ boot (เมื่อมี Redis) — syncWorker จะ flush + push
 	// snapshot แรกภายใน 3 วิ กันช่องว่างที่ไม่มีกิจกรรมผู้ใช้แล้วไม่เคยมี
 	// snapshot เกิดขึ้นเลย (ถ้าดิสก์หายทีหลังจะไม่มีอะไรให้กู้)
@@ -238,17 +244,57 @@ func (db *PersistentDB) SaveAPIKey(key string, rec APIKeyRecord) {
 	if db.data.APIKeys == nil {
 		db.data.APIKeys = make(map[string]APIKeyRecord)
 	}
-	db.data.APIKeys[key] = rec
+	rec.KeyPrefix = apiKeyPrefix(key)
+	db.data.APIKeys[hashAPIKey(key)] = rec
 	db.dirty = true
 }
 
 // GetAPIKey — ดึงข้อมูล key (มี = ใช้ได้)
+// ค้นจาก sha256 เสมอ + รองรับ record เก่าที่ยังเก็บ plaintext เป็น map key
+// (ค้นเจอแล้วย้ายเป็น hash ทันที = lazy migration)
 func (db *PersistentDB) GetAPIKey(key string) (APIKeyRecord, bool) {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
+	hash := hashAPIKey(key)
 
-	rec, ok := db.data.APIKeys[key]
-	return rec, ok
+	db.mu.RLock()
+	rec, ok := db.data.APIKeys[hash]
+	db.mu.RUnlock()
+	if ok {
+		return rec, true
+	}
+
+	// fallback: key เก่าก่อน migration (map key = plaintext ขึ้นต้น sk_live_)
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	if rec, ok := db.data.APIKeys[key]; ok && strings.HasPrefix(key, apiKeyIDPrefix) {
+		delete(db.data.APIKeys, key)
+		rec.KeyPrefix = apiKeyPrefix(key)
+		db.data.APIKeys[hash] = rec
+		db.dirty = true
+		return rec, true
+	}
+	return APIKeyRecord{}, false
+}
+
+// migrateAPIKeysToHashed — ย้าย key ที่ยังเก็บ plaintext (map key = sk_live_...)
+// ไปเป็น sha256 ตอนบูต (คืนจำนวนรายการที่ย้าย) — เรียกจาก InitDB หลังโหลด
+func (db *PersistentDB) migrateAPIKeysToHashed() int {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	moved := 0
+	for k, rec := range db.data.APIKeys {
+		if !strings.HasPrefix(k, apiKeyIDPrefix) {
+			continue // ไม่ใช่ key รูปแบบ plaintext (เช่น ข้อมูลทดสอบ) -> ข้าม
+		}
+		delete(db.data.APIKeys, k)
+		rec.KeyPrefix = apiKeyPrefix(k)
+		db.data.APIKeys[hashAPIKey(k)] = rec
+		moved++
+	}
+	if moved > 0 {
+		db.dirty = true
+	}
+	return moved
 }
 
 // ListAPIKeys — รายการ key ทั้งหมด (เรียงตามเวลาที่ใช้ล่าสุด)
@@ -270,13 +316,18 @@ func (db *PersistentDB) ListAPIKeys() []APIKeyRecord {
 }
 
 // ListAPIKeyViews — เหมือน ListAPIKeys แต่เติม key_id (prefix) และไม่คืนค่า key เต็ม
+// (map key เป็น sha256 แล้ว -> ใช้ KeyPrefix ที่บันทึกไว้ใน record แสดงผล)
 func (db *PersistentDB) ListAPIKeyViews() []APIKeyView {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
 	out := make([]APIKeyView, 0, len(db.data.APIKeys))
 	for key, rec := range db.data.APIKeys {
-		out = append(out, APIKeyView{APIKeyRecord: rec, KeyID: apiKeyPrefix(key)})
+		pid := rec.KeyPrefix
+		if pid == "" {
+			pid = apiKeyPrefix(key) // record เก่าที่ยังไม่มี KeyPrefix
+		}
+		out = append(out, APIKeyView{APIKeyRecord: rec, KeyID: pid})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].LastUsedAt != out[j].LastUsedAt {
@@ -287,12 +338,21 @@ func (db *PersistentDB) ListAPIKeyViews() []APIKeyView {
 	return out
 }
 
-// FindAPIKeyByPrefix — หา key เต็มจาก prefix (สำหรับเพิกถอนโดยไม่ต้องเก็บ key เต็มไว้ในหน้า admin)
-func (db *PersistentDB) FindAPIKeyByPrefix(prefix string) string {
+// FindAPIKeyHashByPrefix — หา key ใน map (sha256) จาก prefix ที่แสดงในหน้า admin
+// (ค่าเต็มไม่ถูกเก็บใน DB แล้ว -> ค้นจาก KeyPrefix ที่บันทึกไว้ใน record)
+func (db *PersistentDB) FindAPIKeyHashByPrefix(prefix string) string {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
-	for key := range db.data.APIKeys {
+	for key, rec := range db.data.APIKeys {
+		if rec.KeyPrefix != "" {
+			// รับทั้ง prefix สั้น (sk_live_xxxx) และ key เต็ม (หน้า admin เคยส่ง key เต็มมาก่อน)
+			if strings.HasPrefix(rec.KeyPrefix, prefix) || strings.HasPrefix(prefix, rec.KeyPrefix) {
+				return key
+			}
+			continue
+		}
+		// record เก่าก่อน migration (ไม่มี KeyPrefix)
 		if strings.HasPrefix(key, prefix) {
 			return key
 		}
@@ -300,15 +360,15 @@ func (db *PersistentDB) FindAPIKeyByPrefix(prefix string) string {
 	return ""
 }
 
-// DeleteAPIKey — เพิกถอน key (ลบถาวร)
-func (db *PersistentDB) DeleteAPIKey(key string) bool {
+// DeleteAPIKeyByHash — เพิกถอน key ด้วยค่า map key (sha256) ลบถาวร
+func (db *PersistentDB) DeleteAPIKeyByHash(hash string) bool {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
-	if _, ok := db.data.APIKeys[key]; !ok {
+	if _, ok := db.data.APIKeys[hash]; !ok {
 		return false
 	}
-	delete(db.data.APIKeys, key)
+	delete(db.data.APIKeys, hash)
 	db.dirty = true
 	return true
 }

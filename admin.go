@@ -2,8 +2,14 @@ package main
 
 import (
 	"bufio"
+	"crypto/subtle"
+	"encoding/json"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -11,11 +17,141 @@ import (
 // ============================================================
 // Admin Panel — token-based auth (env ADMIN_TOKEN)
 // Route: /api/admin/* (ป้องกันด้วย X-Admin-Token header)
+//
+// แผนข้อ 2 (ความปลอดภัย):
+//   - เทียบ token แบบ constant-time (กัน timing attack)
+//   - ล็อก IP ที่ยิงผิดต่อเนื่อง (ADMIN_AUTH_MAX_FAILS ครั้งใน 10 นาที
+//     -> 429 นาน ADMIN_AUTH_LOCK_MINUTES นาที) — กัน brute-force token
+//   - audit log ทุกคำขอที่เปลี่ยนแปลงข้อมูล (POST/PUT/DELETE)
+//     ลง logs/admin-audit.log (เปลี่ยน path ได้ด้วย env ADMIN_AUDIT_LOG)
 // ============================================================
+
+// adminAuthFailState — นับความผิดต่อ IP
+type adminAuthFailState struct {
+	Fails       int
+	WindowStart time.Time
+	LockedUntil time.Time
+}
+
+var (
+	adminAuthMu    sync.Mutex
+	adminAuthFails = map[string]*adminAuthFailState{}
+)
+
+// adminAuthLimits — อ่านค่าจาก env (default: 5 ครั้ง / ล็อก 10 นาที)
+func adminAuthLimits() (maxFails int, lockMinutes int) {
+	maxFails = envInt("ADMIN_AUTH_MAX_FAILS", 5)
+	lockMinutes = envInt("ADMIN_AUTH_LOCK_MINUTES", 10)
+	if maxFails <= 0 {
+		maxFails = 5
+	}
+	if lockMinutes <= 0 {
+		lockMinutes = 10
+	}
+	return
+}
+
+// adminClientIP — IP ของแอดมิน (XFF ตัวสุดท้าย = ที่ proxy มองเห็น
+// ตาม convention ของโปรเจคนี้ ไม่มี req.ip ฝั่ง Next)
+func adminClientIP(c *gin.Context) string {
+	xff := strings.TrimSpace(c.GetHeader("X-Forwarded-For"))
+	if xff != "" {
+		parts := strings.Split(xff, ",")
+		return strings.TrimSpace(parts[len(parts)-1])
+	}
+	return c.ClientIP()
+}
+
+// adminAuthLocked — เช็คว่า IP นี้ถูกล็อกอยู่ไหม
+func adminAuthLocked(ip string) (bool, int) {
+	adminAuthMu.Lock()
+	defer adminAuthMu.Unlock()
+
+	st, ok := adminAuthFails[ip]
+	if !ok {
+		return false, 0
+	}
+	now := time.Now()
+	if !st.LockedUntil.IsZero() && now.Before(st.LockedUntil) {
+		return true, int(st.LockedUntil.Sub(now).Seconds()) + 1
+	}
+	// หมดช่วงเวลาแล้ว -> ล้างประวัติ
+	if st.LockedUntil.IsZero() && now.Sub(st.WindowStart) > 10*time.Minute {
+		delete(adminAuthFails, ip)
+	}
+	return false, 0
+}
+
+// adminAuthNoteFail — บันทึก 1 ความผิด (ครบเกณฑ์ -> ล็อก IP)
+func adminAuthNoteFail(ip string) {
+	maxFails, lockMinutes := adminAuthLimits()
+	adminAuthMu.Lock()
+	defer adminAuthMu.Unlock()
+
+	now := time.Now()
+	st, ok := adminAuthFails[ip]
+	if !ok || (st.LockedUntil.IsZero() && now.Sub(st.WindowStart) > 10*time.Minute) {
+		st = &adminAuthFailState{WindowStart: now}
+		adminAuthFails[ip] = st
+	}
+	st.Fails++
+	if st.Fails >= maxFails {
+		st.LockedUntil = now.Add(time.Duration(lockMinutes) * time.Minute)
+	}
+
+	// กันหน่วยความจำบวมถ้ามี IP ยิงผิดเยอะ (ตัดรายการเก่าที่หมดอายุ)
+	if len(adminAuthFails) > 1000 {
+		for k, v := range adminAuthFails {
+			if v.LockedUntil.IsZero() && now.Sub(v.WindowStart) > 10*time.Minute {
+				delete(adminAuthFails, k)
+			}
+		}
+	}
+}
+
+// adminAuthResetFails — สำเร็จ -> ล้างประวัติความผิดของ IP
+func adminAuthResetFails(ip string) {
+	adminAuthMu.Lock()
+	defer adminAuthMu.Unlock()
+	delete(adminAuthFails, ip)
+}
+
+// writeAdminAudit — บันทึกคำขอที่เปลี่ยนแปลงข้อมูล (JSON line ต่อแถว)
+func writeAdminAudit(ip, method, path string, status int) {
+	entry := map[string]interface{}{
+		"time":   time.Now().UTC().Format(time.RFC3339),
+		"ip":     ip,
+		"method": method,
+		"path":   path,
+		"status": status,
+	}
+	line, _ := json.Marshal(entry)
+
+	logPath := getEnv("ADMIN_AUDIT_LOG", "logs/admin-audit.log")
+	if err := os.MkdirAll("logs", 0755); err == nil {
+		if f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600); err == nil {
+			_, _ = f.Write(append(line, '\n'))
+			_ = f.Close()
+		}
+	}
+	logInfof("📝 admin audit: %s %s -> %d (ip=%s)", method, path, status, ip)
+}
 
 // adminAuthMiddleware ตรวจสอบ X-Admin-Token กับ env ADMIN_TOKEN
 func adminAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		ip := adminClientIP(c)
+
+		// ถูกล็อกจากยิงผิดก่อนหน้า -> ไม่ต้องเช็ค token
+		if locked, retrySec := adminAuthLocked(ip); locked {
+			c.Header("Retry-After", strconv.Itoa(retrySec))
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error": "ยิงผิดต่อเนื่องเกินกำหนด -> ถูกระงับชั่วคราว",
+			})
+			c.Abort()
+			return
+		}
+
 		token := c.GetHeader("X-Admin-Token")
 		expected := getEnv("ADMIN_TOKEN", "")
 		if expected == "" {
@@ -23,12 +159,21 @@ func adminAuthMiddleware() gin.HandlerFunc {
 			c.Abort()
 			return
 		}
-		if token == "" || token != expected {
+		// constant-time compare (กันเดา token จากระยะเวลาตอบ)
+		if token == "" || subtle.ConstantTimeCompare([]byte(token), []byte(expected)) != 1 {
+			adminAuthNoteFail(ip)
+			logInfof("⚠️ admin auth ผิดจาก ip=%s %s %s", ip, c.Request.Method, c.Request.URL.Path)
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 			c.Abort()
 			return
 		}
+		adminAuthResetFails(ip)
 		c.Next()
+
+		// audit ทุกคำขอที่เปลี่ยนแปลงข้อมูล (ของ GET ไม่บันทึก กันไฟล์บวม)
+		if c.Request.Method != http.MethodGet {
+			writeAdminAudit(ip, c.Request.Method, c.Request.URL.Path, c.Writer.Status())
+		}
 	}
 }
 
