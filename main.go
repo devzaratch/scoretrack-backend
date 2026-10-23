@@ -1384,11 +1384,13 @@ func handleProxy(cacheKeyPattern string, ttl time.Duration, targetURLBuilder fun
 				}
 			}
 			// ข้อมูลลีกที่เป็นตาราง hardcode ฤดูกาลเก่า (tableSource=hardcoded-stale)
+			// หรือตาราง TSDB ที่ล็อกฤดูกาล 2024-2025 (tableSource=thesportsdb)
 			// -> cache สั้น 3 นาทีเท่านั้น: ข้อมูลปีก่อนถูกเสิร์ฟเป็นปีนี้อยู่แล้ว
 			// ยิ่งค้างนานยิ่งผิดนาน — สั้นเพื่อให้ retry เจอของจริงทันทีที่ provider ฟื้น
-			if dataType == "league" && bytes.Contains(data, []byte(`"hardcoded-stale"`)) {
+			// ("computed-live"/"rapidapi" = ข้อมูลจริง -> cache เต็ม TTL ปกติ)
+			if dataType == "league" && (bytes.Contains(data, []byte(`"hardcoded-stale"`)) || bytes.Contains(data, []byte(`"thesportsdb"`))) {
 				cacheTTL = 3 * time.Minute
-				logInfof("⚠️ league %s: ตารางคะแนนเป็นข้อมูล hardcode ฤดูกาลเก่า -> cache สั้น 3 นาที ( provider จริงล่ม )", paramOrQuery)
+				logInfof("⚠️ league %s: ตารางคะแนนเป็นข้อมูลเก่า (hardcode/TSDB ปีก่อน) -> cache สั้น 3 นาที ( provider จริงล่ม )", paramOrQuery)
 			}
 			cacheSet(cacheKey, data, cacheTTL)
 
@@ -1412,11 +1414,11 @@ func handleProxy(cacheKeyPattern string, ttl time.Duration, targetURLBuilder fun
 			return
 		}
 		if len(realData) > 0 {
-			// ข้อมูล hardcode ฤดูกาลเก่า -> cache สั้น 3 นาที (เหตุผลเดียวกับบล็อกด้านบน)
+			// ข้อมูล hardcode ฤดูกาลเก่า / TSDB ปีก่อน -> cache สั้น 3 นาที (เหตุผลเดียวกับบล็อกด้านบน)
 			realTTL := ttl
-			if dataType == "league" && bytes.Contains(realData, []byte(`"hardcoded-stale"`)) {
+			if dataType == "league" && (bytes.Contains(realData, []byte(`"hardcoded-stale"`)) || bytes.Contains(realData, []byte(`"thesportsdb"`))) {
 				realTTL = 3 * time.Minute
-				logInfof("⚠️ league %s: Real-Data-Engine คืนตาราง hardcode ฤดูกาลเก่า -> cache สั้น 3 นาที", paramOrQuery)
+				logInfof("⚠️ league %s: Real-Data-Engine คืนตารางข้อมูลเก่า (hardcode/TSDB ปีก่อน) -> cache สั้น 3 นาที", paramOrQuery)
 			}
 			cacheSet(cacheKey, realData, realTTL)
 		}

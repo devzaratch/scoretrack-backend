@@ -97,6 +97,8 @@ type CalculatedStanding struct {
 	ScoresStr string `json:"scoresStr"`
 	Pts       int    `json:"pts"`
 	Logo      string `json:"logo"`
+	Form      string `json:"form,omitempty"`  // ฟอร์ม 5 นัดหลัง "WWDLW" (มีเฉพาะแถวที่คำนวณจากผลจริง)
+	UID       string `json:"id,omitempty"`    // id ต้นทาง (ULID ของ GOAL) -> client ใช้สร้างลิงก์ /team/{id}
 }
 
 // TheSportsDB API Structs
@@ -482,7 +484,21 @@ func getTSDBLeagueJSON(leagueID string) []byte {
 	standingsList := fetchRapidAPILiveStandings(leagueID)
 	tableSource := "rapidapi"
 
-	// 2. Fallback ไปหา TheSportsDB หาก RapidAPI ยังไม่คืนค่า
+	// 2. 📊 คำนวณตารางคะแนนจากผลแมตช์ "จบแล้ว" จริงของฤดูกาลนี้ (GOAL fixtures
+	//    — endpoint คนละตัวกับ standings ที่มัก 502 คู่กัน จึงมักยังรอด)
+	//    ข้อมูลจริงของฤดูกาลปัจจุบัน ดีกว่า hardcode ปีก่อน -> ใช้ตัวนี้ก่อน TSDB
+	var realFixtures []map[string]interface{}
+	if len(standingsList) < 10 {
+		if computed, fixtures, ok := fetchComputedLeagueStandings(leagueID); ok {
+			tableSource = "computed-live"
+			standingsList = computed
+			realFixtures = fixtures
+			logInfof("✅ standings %s: คำนวณตารางจากผลแมตช์จริง %d ทีม (computed-live)", leagueID, len(computed))
+		}
+	}
+
+	// 3. Fallback ไปหา TheSportsDB หาก RapidAPI/การคำนวณเอง ยังไม่คืนค่า
+	//    (หมายเหตุ: TSDB ถูกล็อกฤดูกาล 2024-2025 = ข้อมูลเก่า ใช้เมื่อไม่มีทางเลือกจริง ๆ)
 	if len(standingsList) < 10 {
 		tableSource = "thesportsdb"
 		url := fmt.Sprintf("https://www.thesportsdb.com/api/v1/json/3/lookuptable.php?l=%s&s=2024-2025", tsdbLeagueID)
@@ -522,7 +538,8 @@ func getTSDBLeagueJSON(leagueID string) []byte {
 		}
 	}
 
-	// 3. 🛡️ หากยังได้ทีมน้อยกว่า 10 ทีม ให้เติมสโมสรในลีกให้เต็มครบ 20 ทีม
+	// 4. 🛡️ หากยังได้ทีมน้อยกว่า 10 ทีม (แม้แต่ผลแมตช์จริงก็ยังดึงไม่ได้)
+	//    ให้เติมสโมสรในลีกจากตาราง hardcode ฤดูกาลเก่า (ตัวเลือกสุดท้าย)
 	//    ข้อมูลชุดนี้เป็น hardcode ฤดูกาลเก่า = ข้อมูลปลอมสำหรับปีนี้
 	//    ต้อง mark ไว้ให้ handleProxy รู้ว่าห้าม cache นาน (ค้าง 10 นาที = ข้อมูลผิด 10 นาที)
 	if len(standingsList) < 10 {
@@ -531,37 +548,20 @@ func getTSDBLeagueJSON(leagueID string) []byte {
 		standingsList = getFull20TeamsStandings(leagueID, leagueName)
 	}
 
-	// ⚽ สร้างแมตช์การแข่งขันสำหรับลีก
-	sampleMatches := []map[string]interface{}{
-		{
-			"id":     1000016463,
-			"time":   "2026-08-24T20:00:00Z",
-			"home":   map[string]interface{}{"id": 8650, "name": "Liverpool"},
-			"away":   map[string]interface{}{"id": 8456, "name": "Manchester City"},
-			"status": map[string]interface{}{"finished": true, "scoreStr": "2 - 1", "reason": map[string]interface{}{"short": "FT"}},
-		},
-		{
-			"id":     1000016464,
-			"time":   "2026-08-24T22:30:00Z",
-			"home":   map[string]interface{}{"id": 9825, "name": "Arsenal"},
-			"away":   map[string]interface{}{"id": 8455, "name": "Chelsea"},
-			"status": map[string]interface{}{"finished": true, "scoreStr": "3 - 1", "reason": map[string]interface{}{"short": "FT"}},
-		},
-		{
-			"id":     1000016465,
-			"time":   "2026-08-25T19:00:00Z",
-			"home":   map[string]interface{}{"id": 8586, "name": "Tottenham"},
-			"away":   map[string]interface{}{"id": 10260, "name": "Manchester United"},
-			"status": map[string]interface{}{"finished": false, "scoreStr": "VS"},
-		},
+	// ⚽ แมตช์การแข่งขันของลีก: ใช้ผลจริงที่คำนวณตารางได้ (ถ้ามี)
+	//    ห้ามโชว์แมตช์ hardcode (เดิม Liverpool 2-1 Man City ปลอมทุกฤดู) -> ไม่มีจริงก็ส่งว่าง
+	matchItems := realFixtures
+	if matchItems == nil {
+		matchItems = []map[string]interface{}{}
 	}
 
 	// 🏆 Metadata ข้อมูลทัวร์นาเมนต์เชิงลึก
 	meta := getLeagueMetadata(leagueID, leagueName)
 
 	data := map[string]interface{}{
-		// marker ให้ handleProxy เลือก TTL: "hardcoded-stale" = ตาราง hardcode ฤดูกาลเก่า
-		// -> ห้าม cache 10 นาที (ข้อมูลผิดจะค้าง); "rapidapi"/"thesportsdb" = ข้อมูลจริง cache ได้เต็มที่
+		// marker ให้ handleProxy เลือก TTL: "hardcoded-stale"/"thesportsdb" = ข้อมูลเก่า
+		// -> ห้าม cache 10 นาที (ข้อมูลผิดจะค้าง); "computed-live" = คำนวณจากผลแมตช์จริง
+		// ของฤดูกาลนี้; "rapidapi" = ตารางจริงจากผู้ให้บริการ -> ข้อมูลจริง cache ได้เต็มที่
 		"tableSource":         tableSource,
 		"allAvailableSeasons": []string{"2026/2027", "2025/2026", "2024/2025", "2023/2024", "2022/2023"},
 		"details": map[string]interface{}{
@@ -585,9 +585,9 @@ func getTSDBLeagueJSON(leagueID string) []byte {
 				"all": standingsList,
 			},
 		},
-		"fixtures": sampleMatches,
+		"fixtures": matchItems,
 		"matches": map[string]interface{}{
-			"allMatches": sampleMatches,
+			"allMatches": matchItems,
 		},
 		"stats": map[string]interface{}{
 			"topScorers": getLeagueTopScorers(leagueID),
