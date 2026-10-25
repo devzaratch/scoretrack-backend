@@ -3,6 +3,7 @@ package main
 import (
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -144,4 +145,76 @@ func CleanChatMessage(raw map[string]interface{}) (map[string]interface{}, int, 
 // ใช้ GlobalRateLimiter ตัวเดียวกับ HTTP (key แยกเป็น chat|<ip>)
 func chatRateLimited(ip string) bool {
 	return !GlobalRateLimiter.AllowKey("chat|"+ip, 12, 30*time.Second)
+}
+
+// --------------------------------------------------
+// Repeat Offender — สะสม strike เมื่อพูดคำหยาบ
+// 3 strike ใน 10 นาที → เปิด mute ส่งข้อความไม่ได้ 5 นาที
+// (AI แท้ต้อง dataset — กฎชัดเจนแบบนี้ตรวจสอบได้ โปร่งใส และไม่ทำผิดคน)
+// --------------------------------------------------
+
+const (
+	strikeThreshold = 3
+	strikeWindow    = 10 * time.Minute
+	muteDuration    = 5 * time.Minute
+)
+
+type offenderRecord struct {
+	strikes   int
+	firstSeen time.Time
+	until     time.Time // mute จนถึงเวลานี้ (zero = ไม่เคยถูก mute)
+}
+
+var chatOffenders sync.Map // ip -> *offenderRecord
+var offendersMu sync.Mutex
+
+// registerChatStrike เพิ่ม strike ของ ip คืน true เมื่อครบ threshold (เปิด mute แล้ว)
+func registerChatStrike(ip string) bool {
+	now := time.Now()
+	offendersMu.Lock()
+	defer offendersMu.Unlock()
+	v, _ := chatOffenders.LoadOrStore(ip, &offenderRecord{})
+	rec := v.(*offenderRecord)
+	// นอกหน้าต่าง 10 นาที → เริ่มนับใหม่
+	if rec.firstSeen.IsZero() || now.Sub(rec.firstSeen) > strikeWindow {
+		rec.firstSeen = now
+		rec.strikes = 0
+	}
+	rec.strikes++
+	if rec.strikes >= strikeThreshold {
+		rec.until = now.Add(muteDuration)
+		rec.strikes = 0
+		return true
+	}
+	return false
+}
+
+// chatMuted คืน (ถูก mute อยู่, เหลือเวลาเท่าไหร่)
+func chatMuted(ip string) (bool, time.Duration) {
+	v, ok := chatOffenders.Load(ip)
+	if !ok {
+		return false, 0
+	}
+	rec := v.(*offenderRecord)
+	remain := time.Until(rec.until)
+	if remain > 0 {
+		return true, remain
+	}
+	return false, 0
+}
+
+// --------------------------------------------------
+// Anti-duplicate — กันส่งข้อความเดิมซ้ำจาก ip เดียวกัน (spam ทั่วไป)
+// --------------------------------------------------
+
+var chatLastMsg sync.Map // ip -> ข้อความล่าสุดที่ส่งผ่านแล้ว
+
+// chatDuplicateMessage คืน true ถ้าข้อความนี้เหมือนล่าสุดที่ส่งมาจาก ip เดียวกัน
+func chatDuplicateMessage(ip, cleanedText string) bool {
+	prev, loaded := chatLastMsg.LoadOrStore(ip, cleanedText)
+	if loaded && prev.(string) == cleanedText {
+		return true
+	}
+	chatLastMsg.Store(ip, cleanedText)
+	return false
 }

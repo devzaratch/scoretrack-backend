@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 // กฎ moderation: mask คำหยาบด้วย * / sanitize ข้อความ / ตัดความยาว / กัน control chars
 
@@ -128,5 +131,53 @@ func TestCleanChatMessageDropsExtraKeys(t *testing.T) {
 	}
 	if _, exists := msg["evil"]; exists {
 		t.Fatal("expected extra keys dropped")
+	}
+}
+
+func TestRepeatOffenderMuteAfterThreshold(t *testing.T) {
+	ip := "test-ip-mute"
+	// strike 2 ครั้ง — ยังไม่ mute
+	if registerChatStrike(ip) {
+		t.Fatal("did not expect mute before threshold")
+	}
+	registerChatStrike(ip)
+
+	// ยังไม่ถูก mute
+	if muted, _ := chatMuted(ip); muted {
+		t.Fatal("did not expect muted yet")
+	}
+
+	// strike ครบ 3 → mute
+	if !registerChatStrike(ip) {
+		t.Fatal("expected mute at threshold")
+	}
+	if muted, remain := chatMuted(ip); !muted || remain <= 0 {
+		t.Fatal("expected muted with remaining time")
+	}
+}
+
+func TestRepeatOffenderWindowReset(t *testing.T) {
+	ip := "test-ip-window"
+	// จำลองหน้าต่างเก่ากว่า strikeWindow
+	v, _ := chatOffenders.LoadOrStore(ip, &offenderRecord{
+		strikes:   strikeThreshold - 1,
+		firstSeen: time.Now().Add(-strikeWindow - time.Minute),
+	})
+	_ = v
+	if registerChatStrike(ip) {
+		t.Fatal("expected window reset, strike count restarted")
+	}
+}
+
+func TestChatDuplicateMessage(t *testing.T) {
+	ip := "test-ip-dup"
+	if chatDuplicateMessage(ip, "hello") {
+		t.Fatal("first message must not be duplicate")
+	}
+	if !chatDuplicateMessage(ip, "hello") {
+		t.Fatal("same message again = duplicate")
+	}
+	if chatDuplicateMessage(ip, "world") {
+		t.Fatal("different message must not be duplicate")
 	}
 }

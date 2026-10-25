@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -218,13 +219,55 @@ func (c *ChatClient) readPump() {
 			continue
 		}
 
+		// Soft mute — คนที่สะสม strike คำหยาบครบ (ข้อ 6: repeat offender)
+		if muted, remain := chatMuted(c.ip); muted {
+			warn, _ := json.Marshal(map[string]interface{}{
+				"user": "System",
+				"text": fmt.Sprintf("🚫 ถูกหยุดส่งข้อความชั่วคราว อีก %d นาที", int(remain.Minutes())+1),
+				"type": "system",
+			})
+			select {
+			case c.send <- warn:
+			default:
+			}
+			continue
+		}
+
 		// กรองคำหยาบ + sanitize — ก่อนบันทึก DB และ broadcast
 		cleaned, masked, ok := CleanChatMessage(msg)
 		if !ok {
 			continue // ข้อความว่างหลัง trim -> ทิ้ง
 		}
+
+		// กันส่งข้อความเดิมซ้ำ (spam ง่ายสุด)
+		cleanText, _ := cleaned["text"].(string)
+		if cleanText != "" && chatDuplicateMessage(c.ip, cleanText) {
+			warn, _ := json.Marshal(map[string]interface{}{
+				"user": "System",
+				"text": "⚠️ ส่งข้อความซ้ำกัน กรุณาเปลี่ยนข้อความ",
+				"type": "system",
+			})
+			select {
+			case c.send <- warn:
+			default:
+			}
+			continue
+		}
+
 		if masked > 0 {
 			logInfof("🛡️ chat mod: masked %d bad word(s) in room %s (%s)", masked, c.matchID, c.ip)
+			// สะสม strike — ครบ 3 ครั้งใน 10 นาที = ได้ mute 5 นาที
+			if registerChatStrike(c.ip) {
+				warn, _ := json.Marshal(map[string]interface{}{
+					"user": "System",
+					"text": "🚫 ส่งคำหยาบซ้ำบ่อยเกินไป จึงหยุดส่งข้อความ 5 นาที",
+					"type": "system",
+				})
+				select {
+				case c.send <- warn:
+				default:
+				}
+			}
 		}
 
 		c.hub.BroadcastToRoom(c.matchID, cleaned)
