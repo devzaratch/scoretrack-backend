@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -40,11 +41,28 @@ func (c *LiveClient) readPump() {
 		return nil
 	})
 	for {
-		_, _, err := c.conn.ReadMessage()
+		_, raw, err := c.conn.ReadMessage()
 		if err != nil {
 			break
 		}
+		// Chat Polls (แผนใหม่ข้อ 5) — รับ poll_get/poll_vote จาก client
+		// (ถ้าข้อความไม่ใช่ poll = ไม่ทำอะไร; live hub ไม่รับ chat text)
+		if resp := handleLiveClientMessage(raw, clientIPOf(c.conn)); resp != nil {
+			select {
+			case c.send <- resp:
+			default: // คิวเต็ม = ทิ้ง (client ขอใหม่ได้ด้วย poll_get)
+			}
+		}
 	}
+}
+
+// clientIPOf — ดึง IP จาก websocket connection (ใช้เป็น voter สำรอง)
+func clientIPOf(conn *websocket.Conn) string {
+	addr := conn.RemoteAddr().String()
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		return host
+	}
+	return addr
 }
 
 func (c *LiveClient) writePump() {
