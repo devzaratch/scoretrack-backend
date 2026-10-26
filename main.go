@@ -167,6 +167,9 @@ func main() {
 	// 6. Backup restore drill (แผนใหม่ข้อ 10) — พิสูจน์ว่า snapshot กู้ได้จริง
 	go startBackupDrillLoop()
 
+	// 7. Season archive (แผนใหม่ข้อ 4) — เก็บผลแมตช์จบลง Redis/memory
+	go startArchiveSweeper()
+
 	// gin.New + middleware ของเราเอง (แผนข้อ 9): gin.Default() = [GIN] free text
 	// logger + Recovery ไม่มี field — ตอนนี้ request log เป็น JSON ทุกบรรทัด
 	// (observability.go) + panic เก็บ stack ลง structured log
@@ -382,6 +385,10 @@ func main() {
 		rg.POST("/user/notifications", rateLimitMiddleware("user-write", RLUserWrite, time.Minute), handleSaveNotificationPrefs)
 		rg.GET("/calendar", handleCalendar)
 		rg.GET("/calendar/ical", handleCalendarIcal)
+
+		// Season Archive (แผนใหม่ข้อ 4) — ผลแมตช์ที่จบแล้วจาก Redis/memory ของเราเอง
+		rg.GET("/archive", rateLimitMiddleware("proxy", RLProxy, time.Minute), handleArchiveList)
+		rg.GET("/archive/:id", rateLimitMiddleware("proxy", RLProxy, time.Minute), handleArchiveMatch)
 
 		// Error reporting (frontend monitoring)
 		rg.POST("/client-errors", rateLimitMiddleware("error-report", RLErrorReport, time.Minute), handleClientError)
