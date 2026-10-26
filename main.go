@@ -390,6 +390,9 @@ func main() {
 		rg.GET("/archive", rateLimitMiddleware("proxy", RLProxy, time.Minute), handleArchiveList)
 		rg.GET("/archive/:id", rateLimitMiddleware("proxy", RLProxy, time.Minute), handleArchiveMatch)
 
+		// Image CDN proxy (แผนใหม่ข้อ 6) — /api/img?u=<encoded url> (memory+Redis cache 7 วัน)
+		rg.GET("/img", rateLimitMiddleware("proxy", RLImage, time.Minute), handleImageProxy)
+
 		// Error reporting (frontend monitoring)
 		rg.POST("/client-errors", rateLimitMiddleware("error-report", RLErrorReport, time.Minute), handleClientError)
 		rg.POST("/metrics", rateLimitMiddleware("metrics", RLMetrics, time.Minute), handleMetrics)
@@ -1095,14 +1098,15 @@ func rateLimitMiddleware(route string, limit int, window time.Duration) gin.Hand
 
 // Rate limit profiles (per-endpoint)
 const (
-	RLAuth        = 10 // auth/google — ป้องกัน token spam
-	RLSearch      = 30 // search suggest — แพง (GOAL API)
-	RLProxy       = 60 // proxy endpoints (matches/league/team/player)
-	RLNews        = 30 // news RSS
-	RLErrorReport = 20 // client-errors — กัน log spam
-	RLMetrics     = 60 // metrics beacon (vitals+pageview)
-	RLPrediction  = 30 // predictions save
-	RLUserWrite   = 30 // favorites/fcm/subscribe writes
+	RLAuth        = 10  // auth/google — ป้องกัน token spam
+	RLSearch      = 30  // search suggest — แพง (GOAL API)
+	RLProxy       = 60  // proxy endpoints (matches/league/team/player)
+	RLNews        = 30  // news RSS
+	RLErrorReport = 20  // client-errors — กัน log spam
+	RLMetrics     = 60  // metrics beacon (vitals+pageview)
+	RLPrediction  = 30  // predictions save
+	RLUserWrite   = 30  // favorites/fcm/subscribe writes
+	RLImage       = 300 // image CDN proxy (/api/img — proxy ไฟล์รูปภาพ, 300/min)
 )
 
 // ---------------------------------------------------------
