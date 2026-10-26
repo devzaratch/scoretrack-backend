@@ -167,6 +167,10 @@ func requestLogMiddleware() gin.HandlerFunc {
 			"bytes", c.Writer.Size(),
 			"ip", c.ClientIP(),
 		}
+		// Correlation ID (แผนใหม่ข้อ 1) — grep ค่านี้ใน log = เห็นทั้ง trace
+		if id := requestIDFrom(c); id != "" {
+			fields = append(fields, "request_id", id)
+		}
 		switch {
 		case status >= 500:
 			logError("http request", fields...)

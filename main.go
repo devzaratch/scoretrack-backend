@@ -165,7 +165,8 @@ func main() {
 	// logger + Recovery ไม่มี field — ตอนนี้ request log เป็น JSON ทุกบรรทัด
 	// (observability.go) + panic เก็บ stack ลง structured log
 	r := gin.New()
-	r.Use(recoveryMiddleware(), requestLogMiddleware())
+	// requestIDMiddleware ต้องมาก่อนสุด — recovery/log/rate-limit ทุกตัวใช้ ID เดียวกัน
+	r.Use(requestIDMiddleware(), recoveryMiddleware(), requestLogMiddleware())
 
 	// หน้าแรก Root / สำหรับตรวจสอบสถานะ Server
 	r.GET("/", func(c *gin.Context) {
@@ -1049,7 +1050,7 @@ func rateLimiterMiddleware() gin.HandlerFunc {
 		ip := c.ClientIP()
 		if !GlobalRateLimiter.Allow(ip, 120*rateLimitScale, time.Minute) {
 			rateLimitedTotal.Add(1)
-			logWarn("rate limited", "ip", ip, "scope", "global", "route", c.FullPath())
+			logWarn("rate limited", "ip", ip, "scope", "global", "route", c.FullPath(), "request_id", requestIDFrom(c))
 			c.JSON(http.StatusTooManyRequests, gin.H{
 				"error": "คำขอมากเกินไป กรุณารอ 1 นาทีก่อนลองใหม่",
 			})
@@ -1067,7 +1068,7 @@ func rateLimitMiddleware(route string, limit int, window time.Duration) gin.Hand
 		key := c.ClientIP() + "|" + route
 		if !GlobalRateLimiter.AllowKey(key, limit*rateLimitScale, window) {
 			rateLimitedTotal.Add(1)
-			logWarn("rate limited", "ip", c.ClientIP(), "scope", route, "route", c.FullPath())
+			logWarn("rate limited", "ip", c.ClientIP(), "scope", route, "route", c.FullPath(), "request_id", requestIDFrom(c))
 			c.Header("Retry-After", fmt.Sprintf("%d", int(window.Seconds())))
 			c.JSON(http.StatusTooManyRequests, gin.H{
 				"error": fmt.Sprintf("คำขอมากเกินไปสำหรับ %s กรุณารอ %v ก่อนลองใหม่", route, window),
