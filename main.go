@@ -405,6 +405,9 @@ func main() {
 
 		// Error reporting (frontend monitoring)
 		rg.POST("/client-errors", rateLimitMiddleware("error-report", RLErrorReport, time.Minute), handleClientError)
+
+		// Monitor / Uptime (แผนใหม่ข้อ 8) — health check + provider quota + error rate
+		rg.GET("/monitor/status", rateLimitMiddleware("proxy", RLProxy, time.Minute), handleMonitorStatus)
 		rg.POST("/metrics", rateLimitMiddleware("metrics", RLMetrics, time.Minute), handleMetrics)
 
 		// Admin Panel
