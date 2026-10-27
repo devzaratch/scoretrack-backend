@@ -1,0 +1,169 @@
+package main
+
+// --- PersistentDB methods for Auth V2 ---
+// (structs UserProfile / VerificationCode / PasswordReset อยู่ใน auth_v2.go)
+
+// SaveUserProfile บันทึก profile ของผู้ใช้
+func (db *PersistentDB) SaveUserProfile(sub string, prof UserProfile, passwordHash string) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	db.data.UserProfiles[sub] = prof
+	db.data.EmailToSub[prof.Email] = sub
+	db.data.UserPasswords[prof.Email] = passwordHash
+	db.dirty = true
+}
+
+// GetUserProfile ดึง profile จาก sub
+func (db *PersistentDB) GetUserProfile(sub string) (UserProfile, bool) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	prof, ok := db.data.UserProfiles[sub]
+	return prof, ok
+}
+
+// GetUserProfileByEmail ค้นหา profile จากอีเมล (สำหรับ login/register ตรวจซ้ำ)
+func (db *PersistentDB) GetUserProfileByEmail(email string) *UserProfile {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	for _, prof := range db.data.UserProfiles {
+		if prof.Email == email {
+			return &prof
+		}
+	}
+	return nil
+}
+
+// MarkUserVerified ตั้งค่า verified = true
+func (db *PersistentDB) MarkUserVerified(sub string) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	if prof, ok := db.data.UserProfiles[sub]; ok {
+		prof.Verified = true
+		db.data.UserProfiles[sub] = prof
+		db.dirty = true
+	}
+}
+
+// DeleteVerificationCode ลบรหัสยืนยันเก่า
+func (db *PersistentDB) DeleteVerificationCode(email string) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	delete(db.data.VerificationCodes, email)
+	db.dirty = true
+}
+
+// SaveVerificationCode บันทึกรหัสยืนยันอีเมล
+func (db *PersistentDB) SaveVerificationCode(email string, vc VerificationCode) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	db.data.VerificationCodes[email] = vc
+	db.dirty = true
+}
+
+// GetVerificationCode ดึงข้อมูล Rhode ยืนยัน
+func (db *PersistentDB) GetVerificationCode(email string) (VerificationCode, bool) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	vc, ok := db.data.VerificationCodes[email]
+	return vc, ok
+}
+
+// GetPasswordHashByEmail ดึง hash password จากอีเมล (สำหรับ login)
+func (db *PersistentDB) GetPasswordHashByEmail(email string) string {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	return db.data.UserPasswords[email]
+}
+
+// SavePasswordReset บันทึกรหัสรีเซ็ตรหัสผ่าน
+func (db *PersistentDB) SavePasswordReset(email string, pr PasswordReset) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	db.data.PasswordResets[email] = pr
+	db.dirty = true
+}
+
+// GetPasswordReset ดึงข้อมูลรหัสรีเซ็ต (สำหรับยืนยัน)
+func (db *PersistentDB) GetPasswordReset(email string) (PasswordReset, bool) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	pr, ok := db.data.PasswordResets[email]
+	return pr, ok
+}
+
+// UpdatePasswordHash อัปเดตรหัสผ่านใหม่
+func (db *PersistentDB) UpdatePasswordHash(email string, hashStr string) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	db.data.UserPasswords[email] = hashStr
+	db.dirty = true
+}
+
+// DeletePasswordReset ลบรหัสรีเซ็ตหลังใช้งานแล้ว
+func (db *PersistentDB) DeletePasswordReset(email string) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	delete(db.data.PasswordResets, email)
+	db.dirty = true
+}
+
+// GetSubByRefreshToken ค้นหา sub จาก refresh token
+func (db *PersistentDB) GetSubByRefreshToken(token string) string {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	for sub, rt := range db.data.RefreshTokens {
+		if rt == token {
+			return sub
+		}
+	}
+	return ""
+}
+
+// SaveRefreshToken บันทึก refresh token ของ sub ไว้
+func (db *PersistentDB) SaveRefreshToken(sub string, token string, expiresAt int64) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	db.data.RefreshTokens[sub] = token
+	db.data.RefreshExpires[sub] = expiresAt
+	db.dirty = true
+}
+
+// DeleteRefreshToken ลบ refresh token เมื่อ logout หรือ rotate
+func (db *PersistentDB) DeleteRefreshToken(token string) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	for sub, rt := range db.data.RefreshTokens {
+		if rt == token {
+			delete(db.data.RefreshTokens, sub)
+			delete(db.data.RefreshExpires, sub)
+			db.dirty = true
+			return
+		}
+	}
+}
+
+// EnsureAuthDefaults — เรียกที่ InitDB เพื่อสร้าง map เปล่าทั้งหมด (ไม่จำเป็นต้องเรียกซ้ำเพราะทำใน InitDB แล้ว)
+func (db *PersistentDB) EnsureAuthDefaults() {
+	// map ถูกสร้างใน InitDB แล้ว แต่ยืนยันไม่เป็น nil
+	if db.data.UserProfiles == nil {
+		db.data.UserProfiles = make(map[string]UserProfile)
+	}
+	if db.data.EmailToSub == nil {
+		db.data.EmailToSub = make(map[string]string)
+	}
+	if db.data.UserPasswords == nil {
+		db.data.UserPasswords = make(map[string]string)
+	}
+	if db.data.VerificationCodes == nil {
+		db.data.VerificationCodes = make(map[string]VerificationCode)
+	}
+	if db.data.PasswordResets == nil {
+		db.data.PasswordResets = make(map[string]PasswordReset)
+	}
+	if db.data.RefreshTokens == nil {
+		db.data.RefreshTokens = make(map[string]string)
+	}
+	if db.data.RefreshExpires == nil {
+		db.data.RefreshExpires = make(map[string]int64)
+	}
+}

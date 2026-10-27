@@ -22,6 +22,14 @@ type StoreData struct {
 	Achievements          map[string][]string                 `json:"achievements"`       // userID -> list of unlocked achievement IDs
 	APIKeys               map[string]APIKeyRecord             `json:"api_keys"`           // api key -> record (แผนข้อ 7: public API)
 	UserInterests         map[string][]string                 `json:"user_interests"`     // userID -> ["league:47", "team:arsenal fc"] (แผนข้อ 4)
+	// --- Auth V2 (ข้อ 1 รอบใหม่) ---
+	UserProfiles         map[string]UserProfile             `json:"user_profiles"`       // sub -> profile
+	EmailToSub           map[string]string                  `json:"email_to_sub"`        // email -> sub
+	UserPasswords        map[string]string                  `json:"user_passwords"`      // email -> bcrypt hash
+	VerificationCodes    map[string]VerificationCode        `json:"verification_codes"`  // email -> code + expiry
+	PasswordResets       map[string]PasswordReset           `json:"password_resets"`     // email -> token + expiry
+	RefreshTokens        map[string]string                  `json:"refresh_tokens"`      // sub -> refresh token
+	RefreshExpires       map[string]int64                   `json:"refresh_expires"`     // sub -> unix expiry
 }
 
 type PersistentDB struct {
@@ -103,6 +111,9 @@ func InitDB() *PersistentDB {
 	if rdb != nil {
 		db.dirty = true
 	}
+
+	// Auth V2: เตรียม map สำหรับระบบสมาชิกใหม่
+	db.EnsureAuthDefaults()
 
 	// Start Background Async Sync Worker (Flush dirty changes to disk every 3 seconds)
 	go db.syncWorker(3 * time.Second)
