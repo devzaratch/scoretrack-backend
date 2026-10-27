@@ -387,13 +387,13 @@ func main() {
 		rg.GET("/calendar/ical", handleCalendarIcal)
 
 		// Auth V2 (แผนใหม่ข้อ 1) — register / login / verify / forgot / reset / refresh / me
-		rg.POST("/auth/register", handleRegister)
-		rg.POST("/auth/login", handleLogin)
-		rg.POST("/auth/verify-email", handleVerifyEmail)
-		rg.POST("/auth/resend-verify", handleResendVerify)
-		rg.POST("/auth/forgot-password", handleForgotPassword)
-		rg.POST("/auth/reset-password", handleResetPassword)
-		rg.POST("/auth/refresh", handleRefresh)
+		rg.POST("/auth/register", rateLimitMiddleware("auth", RLAuth, time.Minute), handleRegister)
+		rg.POST("/auth/login", rateLimitMiddleware("auth", RLAuth, time.Minute), handleLogin)
+		rg.POST("/auth/verify-email", rateLimitMiddleware("auth", RLAuth, time.Minute), handleVerifyEmail)
+		rg.POST("/auth/resend-verify", rateLimitMiddleware("auth", RLAuth, time.Minute), handleResendVerify)
+		rg.POST("/auth/forgot-password", rateLimitMiddleware("auth", RLAuth, time.Minute), handleForgotPassword)
+		rg.POST("/auth/reset-password", rateLimitMiddleware("auth", RLAuth, time.Minute), handleResetPassword)
+		rg.POST("/auth/refresh", rateLimitMiddleware("auth", RLAuth, time.Minute), handleRefresh)
 		rg.GET("/auth/me", handleMe)
 
 		// Season Archive (แผนใหม่ข้อ 4) — ผลแมตช์ที่จบแล้วจาก Redis/memory ของเราเอง
