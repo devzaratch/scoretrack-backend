@@ -397,6 +397,12 @@ func main() {
 		rg.GET("/auth/me", handleMe)
 		rg.GET("/auth/sessions", rateLimitMiddleware("auth", RLAuth, time.Minute), handleAuthSessions)
 		rg.POST("/auth/logout-all", rateLimitMiddleware("auth", RLAuth, time.Minute), handleLogoutAll)
+		// Phase B ข้อ 5: API key self-service
+		rg.GET("/auth/api-keys", handleUserAPIKeyList)
+		rg.POST("/auth/api-keys", rateLimitMiddleware("user-write", RLUserWrite, time.Minute), handleUserAPIKeyCreate)
+		rg.DELETE("/auth/api-keys/:key", rateLimitMiddleware("user-write", RLUserWrite, time.Minute), handleUserAPIKeyRevoke)
+		// Phase B ข้อ 10: รายงานข้อความแชท
+		rg.POST("/chat/report", rateLimitMiddleware("user-write", RLUserWrite, time.Minute), handleChatReport)
 
 		// Season Archive (แผนใหม่ข้อ 4) — ผลแมตช์ที่จบแล้วจาก Redis/memory ของเราเอง
 		rg.GET("/archive", rateLimitMiddleware("proxy", RLProxy, time.Minute), handleArchiveList)

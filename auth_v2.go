@@ -30,6 +30,9 @@ type UserProfile struct {
 	Email    string `json:"email"`
 	Role     string `json:"role"` // "user" | "admin"
 	Verified bool   `json:"verified"`
+	// Banned = แอดมินระงับบัญชี (ข้อ 4: แบน/ปลดแบนจากหน้า admin)
+	// login/refresh จะปฏิเสธบัญชีที่ banned เสมอ (ผู้ใช้ session เหลื่อมในเสมอที่รื้อ)
+	Banned bool `json:"banned,omitempty"`
 }
 
 type VerificationCode struct {
@@ -183,6 +186,11 @@ func handleLogin(c *gin.Context) {
 	}
 	sub := "email:" + email
 	prof, _ := profileBySub(sub)
+	if prof.Banned {
+		logInfof("🚫 login blocked banned=%s", email)
+		c.JSON(http.StatusForbidden, gin.H{"error": "บัญชีถูกระงับการใช้งาน — ติดต่อทีมงาน"})
+		return
+	}
 	sess := make([]byte, 32)
 	rand.Read(sess)
 	sessionToken := hex.EncodeToString(sess)
@@ -309,6 +317,14 @@ func handleRefresh(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "refresh token ไม่ถูกต้อง"})
 		return
 	}
+	prof, _ := profileBySub(sub)
+	if prof.Banned {
+		GlobalDB.DeleteRefreshTokenBySub(sub)
+		GlobalDB.DeleteUserSessionsBySub(sub)
+		logInfof("🚫 refresh blocked banned sub=%s", sub)
+		c.JSON(http.StatusForbidden, gin.H{"error": "บัญชีถูกระงับการใช้งาน — ติดต่อทีมงาน"})
+		return
+	}
 	sess := make([]byte, 32)
 	rand.Read(sess)
 	sessionToken := hex.EncodeToString(sess)
@@ -316,7 +332,6 @@ func handleRefresh(c *gin.Context) {
 	newRefresh := generateRefreshToken()
 	GlobalDB.SaveRefreshToken(sub, newRefresh, time.Now().Add(refreshExpirySec*time.Second).Unix())
 	setSessionCookie(c, sessionToken)
-	prof, _ := profileBySub(sub)
 	c.JSON(http.StatusOK, gin.H{
 		"authenticated": true,
 		"sub": sub,

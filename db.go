@@ -30,6 +30,7 @@ type StoreData struct {
 	PasswordResets       map[string]PasswordReset           `json:"password_resets"`     // email -> token + expiry
 	RefreshTokens        map[string]string                  `json:"refresh_tokens"`      // sub -> refresh token
 	RefreshExpires       map[string]int64                   `json:"refresh_expires"`     // sub -> unix expiry
+	ChatReports          []ChatReport                       `json:"chat_reports"`        // (Phase B ข้อ 10) รายงานข้อความแชทจากผู้ใช้
 }
 
 type PersistentDB struct {
@@ -382,6 +383,14 @@ func (db *PersistentDB) DeleteAPIKeyByHash(hash string) bool {
 	delete(db.data.APIKeys, hash)
 	db.dirty = true
 	return true
+}
+
+// GetAPIKeyByHash — ดึง record จาก hash (ใช้ตอนผู้ใช้เพิกถอน key ของตัวเอง: เช็ค owner)
+func (db *PersistentDB) GetAPIKeyByHash(hash string) (APIKeyRecord, bool) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	rec, ok := db.data.APIKeys[hash]
+	return rec, ok
 }
 
 // GetUserInterests — รายการความสนใจของผู้ใช้ (เรียงคงที่)

@@ -248,16 +248,102 @@ func handleAdminDBSize(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"size_bytes": info.Size()})
 }
 
+// --- Phase B ข้อ 4: จัดการบัญชี Auth V2 (email/Google) ---
+
+// GET /admin/accounts — รายการบัญชี (profile) ทั้งหมด
+func handleAdminAccounts(c *gin.Context) {
+	accounts := []UserProfile{}
+	if GlobalDB != nil {
+		accounts = GlobalDB.ListUserProfiles()
+	}
+	c.JSON(http.StatusOK, gin.H{"accounts": accounts, "count": len(accounts)})
+}
+
+// POST /admin/accounts/:sub — action: ban | unban | role {"role":"user"|"admin"}
+func handleAdminAccountAction(c *gin.Context) {
+	sub := strings.TrimSpace(c.Param("sub"))
+	if sub == "" || GlobalDB == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ไม่พบ sub"})
+		return
+	}
+	var body struct {
+		Action string `json:"action"` // ban | unban | role
+		Role   string `json:"role"`
+	}
+	_ = c.BindJSON(&body)
+
+	switch body.Action {
+	case "ban":
+		if !GlobalDB.SetUserBanned(sub, true) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "ไม่พบบัญชี"})
+			return
+		}
+		// ออกจากระบบทุกเครื่องทันที (session + refresh หมด)
+		GlobalDB.DeleteUserSessionsBySub(sub)
+		GlobalDB.DeleteRefreshTokenBySub(sub)
+		logInfof("🚫 admin แบนบัญชี: %s", sub)
+	case "unban":
+		if !GlobalDB.SetUserBanned(sub, false) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "ไม่พบบัญชี"})
+			return
+		}
+		logInfof("✅ admin ปลดแบนบัญชี: %s", sub)
+	case "role":
+		if !GlobalDB.SetUserRole(sub, body.Role) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "action=role ต้องมี role = user หรือ admin และไม่พบบัญชี"})
+			return
+		}
+		logInfof("🔧 admin เปลี่ยน role: %s -> %s", sub, body.Role)
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "action เป็น ban | unban | role เท่านั้น"})
+		return
+	}
+	prof, _ := profileBySub(sub)
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "sub": sub, "account": prof})
+}
+
+// --- Phase B ข้อ 10: รายงานแชทฝั่ง admin ---
+
+// GET /admin/chat-reports
+func handleAdminChatReports(c *gin.Context) {
+	reports := []ChatReport{}
+	if GlobalDB != nil {
+		reports = GlobalDB.ListChatReports()
+	}
+	c.JSON(http.StatusOK, gin.H{"reports": reports, "count": len(reports)})
+}
+
+// DELETE /admin/chat-reports/:idx — ปิด/ลบรายงาน (index จากตาราง newest-first)
+func handleAdminChatReportDelete(c *gin.Context) {
+	i, err := strconv.Atoi(c.Param("idx"))
+	if err != nil || GlobalDB == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "idx ไม่ถูกต้อง"})
+		return
+	}
+	// ListChatReports คืน newest-first — หา index เก่าใน DB = len-1-i
+	dbIdx := len(GlobalDB.ListChatReports()) - 1 - i
+	if !GlobalDB.RemoveChatReport(dbIdx) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "ไม่พบรายงาน"})
+		return
+	}
+	logInfof("🗑️ admin ลบรายงานแชท idx=%d", i)
+	c.JSON(http.StatusOK, gin.H{"status": "removed"})
+}
+
 // setupAdminRoutes ตั้งค่า admin routes ทั้งหมด
 func setupAdminRoutes(rg *gin.RouterGroup) {
 	admin := rg.Group("/admin", adminAuthMiddleware())
 	{
 		admin.GET("/stats", handleAdminStats)
 		admin.GET("/users", handleAdminUsers)
+		admin.GET("/accounts", handleAdminAccounts)
+		admin.POST("/accounts/:sub", handleAdminAccountAction)
 		admin.GET("/predictions", handleAdminPredictions)
 		admin.GET("/client-errors", handleAdminClientErrors)
 		admin.GET("/db-size", handleAdminDBSize)
 		admin.GET("/metrics", handleAdminMetrics)
+		admin.GET("/chat-reports", handleAdminChatReports)
+		admin.DELETE("/chat-reports/:idx", handleAdminChatReportDelete)
 		// Public API keys (แผนข้อ 7)
 		admin.GET("/api-keys", handleAPIKeyList)
 		admin.POST("/api-keys", handleAPIKeyCreate)
