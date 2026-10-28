@@ -347,3 +347,54 @@ func handleMe(c *gin.Context) {
 		"verified": prof.Verified,
 	})
 }
+
+// ----- Phase A ข้อ 3: จัดการอุปกรณ์/เซสชัน -----
+
+// subFromCookie — ดึง sub จาก session cookie (pattern เดียวกับ handleMe/requireAdmin)
+func subFromCookie(c *gin.Context) string {
+	if token := sessionTokenFromRequest(c); token != "" && GlobalDB != nil {
+		return GlobalDB.GetSessionSub(token)
+	}
+	return ""
+}
+
+// handleAuthSessions — GET /api/auth/sessions -> สรุปอุปกรณ์/เซสชันที่ยังใช้งานอยู่ของผู้ใช้นี้
+func handleAuthSessions(c *gin.Context) {
+	sub := subFromCookie(c)
+	if sub == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "not logged in"})
+		return
+	}
+	if GlobalDB == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "db unavailable"})
+		return
+	}
+	count := GlobalDB.CountSessionsBySub(sub)
+	refreshExpiry, hasRefresh := GlobalDB.GetRefreshExpiryBySub(sub)
+	c.JSON(http.StatusOK, gin.H{
+		"sub":                 sub,
+		"session_count":       count,
+		"has_refresh":         hasRefresh,
+		"refresh_expires_unix": refreshExpiry,
+	})
+}
+
+// handleLogoutAll — POST /api/auth/logout-all -> ออกจากระบบทุกเครื่อง:
+// ลบ session ทั้งหมดของ sub นี้ (รวมเครื่องปัจจุบัน) + ลบ refresh token
+// (token ที่ถูกขโมยไปใช้ต่อไม่ได้ทันที)
+func handleLogoutAll(c *gin.Context) {
+	sub := subFromCookie(c)
+	if sub == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "not logged in"})
+		return
+	}
+	if GlobalDB == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "db unavailable"})
+		return
+	}
+	removed := GlobalDB.DeleteUserSessionsBySub(sub)
+	GlobalDB.DeleteRefreshTokenBySub(sub)
+	clearSessionCookie(c)
+	logInfof("🚪 logout-all sub=%s sessions_removed=%d", sub, removed)
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "sessions_removed": removed})
+}

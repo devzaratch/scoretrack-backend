@@ -395,6 +395,8 @@ func main() {
 		rg.POST("/auth/reset-password", rateLimitMiddleware("auth", RLAuth, time.Minute), handleResetPassword)
 		rg.POST("/auth/refresh", rateLimitMiddleware("auth", RLAuth, time.Minute), handleRefresh)
 		rg.GET("/auth/me", handleMe)
+		rg.GET("/auth/sessions", rateLimitMiddleware("auth", RLAuth, time.Minute), handleAuthSessions)
+		rg.POST("/auth/logout-all", rateLimitMiddleware("auth", RLAuth, time.Minute), handleLogoutAll)
 
 		// Season Archive (แผนใหม่ข้อ 4) — ผลแมตช์ที่จบแล้วจาก Redis/memory ของเราเอง
 		rg.GET("/archive", rateLimitMiddleware("proxy", RLProxy, time.Minute), handleArchiveList)

@@ -124,3 +124,55 @@ func TestRefreshTokenFlow(t *testing.T) {
 		t.Fatalf("refresh fail code=%d body=%s", w.Code, w.Body.String())
 	}
 }
+
+// Phase A ข้อ 3: sessions summary + logout-all
+func TestSessionsAndLogoutAll(t *testing.T) {
+	setupAuthV2Test(t)
+	defer func() { GlobalDB = nil }()
+
+	sub := "email:sess@test.local"
+	GlobalDB.SaveUserProfile(sub, UserProfile{Sub: sub, Email: "sess@test.local", Role: "user", Verified: true}, "dummyhash")
+
+	// สร้าง session 2 เครื่อง + refresh token 1 ตัว
+	GlobalDB.SaveUserSession("sess-token-a", sub)
+	GlobalDB.SaveUserSession("sess-token-b", sub)
+	GlobalDB.SaveRefreshToken(sub, "sess-refresh", time.Now().Add(3600*time.Second).Unix())
+
+	// หมายเหตุ: DeleteUserSessionsBySub หา session ผ่าน sub = <sub> (จาก map ตรง ๆ)
+	// -> เรียก handler ด้วย cookie ของ token-a
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/auth/sessions", http.NoBody)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "sess-token-a"})
+	c, _ := gin.CreateTestContext(w)
+	c.Request = req
+	handleAuthSessions(c)
+	if w.Code != 200 {
+		t.Fatalf("sessions fail code=%d body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"has_refresh":true`) || !strings.Contains(w.Body.String(), `"session_count":2`) {
+		t.Fatalf("sessions body wrong: %s", w.Body.String())
+	}
+
+	// logout-all ด้วย cookie token-a -> ลบ session ทั้งหมดของ sub นี้ + refresh
+	// (session ผู้ใช้อื่นตั้งไว้ล่วงหน้า: ต้องไม่ควรโดนลบ = isolation)
+	GlobalDB.SaveUserSession("sess-token-other", "other-user")
+	w2 := httptest.NewRecorder()
+	req2, _ := http.NewRequest(http.MethodPost, "/api/auth/logout-all", http.NoBody)
+	req2.AddCookie(&http.Cookie{Name: sessionCookieName, Value: "sess-token-a"})
+	c2, _ := gin.CreateTestContext(w2)
+	c2.Request = req2
+	handleLogoutAll(c2)
+	if w2.Code != 200 {
+		t.Fatalf("logout-all fail code=%d body=%s", w2.Code, w2.Body.String())
+	}
+
+	if cnt := GlobalDB.CountSessionsBySub(sub); cnt != 0 {
+		t.Fatalf("expected 0 sessions after logout-all, got %d", cnt)
+	}
+	if _, ok := GlobalDB.GetRefreshExpiryBySub(sub); ok {
+		t.Fatal("refresh token should be gone after logout-all")
+	}
+	if GlobalDB.GetSessionSub("sess-token-other") != "other-user" {
+		t.Fatal("other user's session must remain untouched")
+	}
+}

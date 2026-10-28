@@ -167,3 +167,39 @@ func (db *PersistentDB) EnsureAuthDefaults() {
 		db.data.RefreshExpires = make(map[string]int64)
 	}
 }
+
+// --- Phase A ข้อ 3: จัดการอุปกรณ์/เซสชัน ---
+
+// CountSessionsBySub นับจำนวน session token ที่ผูกกับ sub นี้ (มีเครื่องกี่เครื่อง)
+func (db *PersistentDB) CountSessionsBySub(sub string) int {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	n := 0
+	for _, s := range db.data.UserSessions {
+		if s == sub {
+			n++
+		}
+	}
+	return n
+}
+
+// GetRefreshExpiryBySub ดึงเวลาหมดอายุ refresh token ของ sub (โมเดลเดียวต่อ 1 โหมด)
+func (db *PersistentDB) GetRefreshExpiryBySub(sub string) (int64, bool) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if _, ok := db.data.RefreshTokens[sub]; !ok {
+		return 0, false
+	}
+	return db.data.RefreshExpires[sub], true
+}
+
+// DeleteRefreshTokenBySub ลบ refresh token ของ sub ทั้งหมด (ออกจากระบบทุกเครื่อง)
+func (db *PersistentDB) DeleteRefreshTokenBySub(sub string) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	if _, ok := db.data.RefreshTokens[sub]; ok {
+		delete(db.data.RefreshTokens, sub)
+		delete(db.data.RefreshExpires, sub)
+		db.dirty = true
+	}
+}
