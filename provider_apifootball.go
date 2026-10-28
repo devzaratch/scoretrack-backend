@@ -636,6 +636,10 @@ func (p *APIFootProvider) MatchDetails(matchID string) ([]byte, error) {
 	d := env.Response[0]
 	p.rememberFixture(d)
 	detail := buildAPIFootMatchDetails(d)
+
+	// Phase C ข้อ 6: ใบแดงสด — ใช้ events ที่ build อยู่แล้ว ไม่ยิง upstream เพิ่ม
+	GlobalRedCardDetector.Process(matchID, d.Teams.Home.Name, d.Teams.Away.Name, buildAPIFootEvents(d))
+
 	return json.Marshal(detail)
 }
 

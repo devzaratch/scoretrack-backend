@@ -1002,6 +1002,11 @@ func (p *GoalProvider) MatchDetails(matchID string) ([]byte, error) {
 	}
 
 	detail := buildGoalMatchDetails(d, h2h, commentary, p.goalLeagueIDFor(d.LeagueID))
+
+	// Phase C ข้อ 6: ใบแดงสด — ใช้ events ที่ build อยู่แล้ว ไม่ยิง upstream เพิ่ม
+	_, _, _, homeName, _, awayName, _ := goalNameBundle(d)
+	GlobalRedCardDetector.Process(matchID, homeName, awayName, buildGoalEvents(d))
+
 	return json.Marshal(detail)
 }
 
