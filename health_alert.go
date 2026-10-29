@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"net/http"
 	"os"
+
+	"github.com/gin-gonic/gin"
 )
 
 func handleHealthAlert(c *gin.Context) {
