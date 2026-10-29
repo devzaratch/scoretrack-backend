@@ -414,6 +414,9 @@ func main() {
 		// Error reporting (frontend monitoring)
 		rg.POST("/client-errors", rateLimitMiddleware("error-report", RLErrorReport, time.Minute), handleClientError)
 
+		// Health alert webhook (แผนข้อ 9) — ส่ง alert เมื่อ /healthz ตอบ 503
+		rg.POST("/monitor/alert", rateLimitMiddleware("proxy", RLProxy, time.Minute), handleHealthAlert)
+
 		// Monitor / Uptime (แผนใหม่ข้อ 8) — health check + provider quota + error rate
 		rg.GET("/monitor/status", rateLimitMiddleware("proxy", RLProxy, time.Minute), handleMonitorStatus)
 		rg.POST("/metrics", rateLimitMiddleware("metrics", RLMetrics, time.Minute), handleMetrics)
