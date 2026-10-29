@@ -1,17 +1,18 @@
-FROM golang:alpine AS builder
+# Build stage
+FROM golang:1.22-alpine AS builder
 WORKDIR /app
-ENV GOTOOLCHAIN=auto
-RUN apk --no-cache add git ca-certificates
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o go-backend .
+RUN CGO_ENABLED=0 GOOS=linux go build -o scoretrack-backend .
 
+# Run stage
 FROM alpine:latest
-WORKDIR /app
-RUN apk --no-cache add ca-certificates tzdata
-COPY --from=builder /app/go-backend .
-VOLUME ["/app/data"]
+RUN apk --no-cache add ca-certificates
+WORKDIR /root/
+COPY --from=builder /app/scoretrack-backend .
+
+# Default port
 EXPOSE 8080
-ENV PORT=8080
-CMD ["./go-backend"]
+
+CMD ["./scoretrack-backend"]
