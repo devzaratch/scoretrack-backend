@@ -12,6 +12,7 @@ package main
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -170,4 +171,37 @@ func handleChatReport(c *gin.Context) {
 	GlobalDB.AddChatReport(rep)
 	logInfof("🚨 chat report: room=%s user=%q reason=%q", rep.MatchID, rep.User, reason)
 	c.JSON(http.StatusOK, gin.H{"status": "reported"})
+}
+
+// handleChatHistory — GET /api/chat/history/:matchId?limit=50
+// คืนประวัติแชทในห้อง (จาก PersistentDB ChatMessages ที่ SaveChatMessage เก็บ
+// ตอน broadcast — แหล่งเดียวกับที่ WS ส่งเข้ามา จึงเห็นเก่าครบถึง 100 ข้อความล่าสุด)
+// ใช้เมื่อ WS ยังไม่ส่งต่อสด หรือผู้ใช้ reload ห้องแชทข้าม session
+func handleChatHistory(c *gin.Context) {
+	matchID := c.Param("matchId")
+	if matchID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "match_id จำเป็น"})
+		return
+	}
+	// SaveChatMessage เก็บสูงสุด 100 — clamp ให้อยู่ช่วงที่มีข้อมูลจริง
+	limit := 50
+	if v, err := strconv.Atoi(c.DefaultQuery("limit", "50")); err == nil {
+		limit = v
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+	if GlobalDB == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "db unavailable"})
+		return
+	}
+	history := GlobalDB.GetChatHistory(matchID, limit)
+	if history == nil {
+		history = []map[string]interface{}{}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"match_id": matchID,
+		"count":    len(history),
+		"messages": history,
+	})
 }

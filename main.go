@@ -403,6 +403,8 @@ func main() {
 		rg.DELETE("/auth/api-keys/:key", rateLimitMiddleware("user-write", RLUserWrite, time.Minute), handleUserAPIKeyRevoke)
 		// Phase B ข้อ 10: รายงานข้อความแชท
 		rg.POST("/chat/report", rateLimitMiddleware("user-write", RLUserWrite, time.Minute), handleChatReport)
+		// แผนใหม่ข้อ 9: อ่านประวัติแชทย้อนหลัง (จาก PersistentDB ChatMessages)
+		rg.GET("/chat/history/:matchId", rateLimitMiddleware("proxy", RLProxy, time.Minute), handleChatHistory)
 
 		// Season Archive (แผนใหม่ข้อ 4) — ผลแมตช์ที่จบแล้วจาก Redis/memory ของเราเอง
 		rg.GET("/archive", rateLimitMiddleware("proxy", RLProxy, time.Minute), handleArchiveList)
