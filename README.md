@@ -102,11 +102,12 @@ curl http://localhost:8080/health
 | Method | Path | คำอธิบาย |
 |--------|------|----------|
 | POST | `/chat/report` | รายงานข้อความที่ไม่เหมาะสม |
+| GET | `/chat/history/:matchId?limit=50` | อ่านประวัติแชทย้อนหลัง (เก็บสูงสุด 100 ข้อความ/ห้อง ใน StoreData) |
 
 ### ระบบ
 | Method | Path | คำอธิบาย |
 |--------|------|----------|
-| GET | `/health` | ตรวจสอบสถานะเซิร์ฟเวอร์ |
+| GET | `/healthz` | ตรวจสอบสถานะเซิร์ฟเวอร์ (503 → `POST /monitor/alert` ยิง webhook) |
 
 ## ระบบทดสอบอัตโนมัติ
 
@@ -136,3 +137,9 @@ go build .
 - คุกกี้ session ใช้ `HttpOnly` และ `SameSite=Lax` เพื่อความปลอดภัย
 - ระบบอัปเดตคะแนนและใบแดงแบบเรียลไทม์ผ่าน WebSocket channel
 - การส่งอีเมลจะทำงานก็ต่อเมื่อมีการตั้งค่า SMTP env vars เท่านั้น มิฉะนั้นจะ log ข้อความแทน
+
+## CI / ความปลอดภัย
+
+- `.github/workflows/ci.yml` — build + vet + test ทุก push (Go 1.26) และรัน `govulncheck` สแกนช่องโหว่ dependency อัตโนมัติ
+- `golang.org/x/net` v0.60+ / `x/crypto` v0.57+ — ปิดช่อง GO-2026-6611/6610/6603/5026
+- `migrations/003_chat_tables.sql` มีตาราง `chat_messages` เป็น backup/future-proofing เท่านั้น — ประวัติแชทจริงเก็บใน `StoreData` ผ่าน `SaveChatMessage` (`db.go`) และอ่านด้วย `GET /chat/history/:matchId`
