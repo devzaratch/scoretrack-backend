@@ -20,6 +20,21 @@ CREATE INDEX IF NOT EXISTS idx_chat_reports_status
 CREATE INDEX IF NOT EXISTS idx_chat_reports_created_at
     ON chat_reports(created_at);
 
+-- Chat messages (history for moderation / replay)
+CREATE TABLE IF NOT EXISTS chat_messages (
+    message_id VARCHAR(64) PRIMARY KEY,
+    match_id VARCHAR(64),
+    user_sub VARCHAR(64) NOT NULL,
+    text TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_messages_match_id
+    ON chat_messages(match_id);
+
+CREATE INDEX IF NOT EXISTS idx_chat_messages_user_sub
+    ON chat_messages(user_sub);
+
 -- Sessions — セッションข้อมูลการล็อกอิน (สำหรับ SessionsCard ในโปรไฟล์)
 CREATE TABLE IF NOT EXISTS user_sessions (
     id        VARCHAR(64) PRIMARY KEY,
