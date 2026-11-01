@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -169,6 +170,33 @@ func (db *PersistentDB) SaveChatMessage(matchID string, msg map[string]interface
 	if len(history) > 100 {
 		history = history[len(history)-100:]
 	}
+	// Retention 30 วัน — ตัดข้อความเก่ากว่า 30 วัน
+	cutoff := time.Now().AddDate(0, 0, -30).Unix()
+	trimmed := []map[string]interface{}{}
+	for _, msg := range history {
+		if tVal, ok := msg["time"]; ok {
+			switch v := tVal.(type) {
+			case float64:
+				if v < float64(cutoff) {
+					continue
+				}
+			case int:
+				if int64(v) < cutoff {
+					continue
+				}
+			case int64:
+				if v < cutoff {
+					continue
+				}
+			case string:
+				if ts, err := strconv.ParseInt(v, 10, 64); err == nil && ts < cutoff {
+					continue
+				}
+			}
+		}
+		trimmed = append(trimmed, msg)
+	}
+	history = trimmed
 	db.data.ChatMessages[matchID] = history
 	db.dirty = true
 }

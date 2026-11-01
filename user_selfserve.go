@@ -199,9 +199,35 @@ func handleChatHistory(c *gin.Context) {
 	if history == nil {
 		history = []map[string]interface{}{}
 	}
+	// Retention 30 วัน — กรองข้อความเก่ากว่า 30 วันออก
+	cutoff := time.Now().AddDate(0, 0, -30).Unix()
+	filtered := []map[string]interface{}{}
+	for _, msg := range history {
+		if tVal, ok := msg["time"]; ok {
+			switch v := tVal.(type) {
+			case float64:
+				if v < float64(cutoff) {
+					continue
+				}
+			case int:
+				if int64(v) < cutoff {
+					continue
+				}
+			case int64:
+				if v < cutoff {
+					continue
+				}
+			case string:
+				if ts, err := strconv.ParseInt(v, 10, 64); err == nil && ts < cutoff {
+					continue
+				}
+			}
+		}
+		filtered = append(filtered, msg)
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"match_id": matchID,
-		"count":    len(history),
-		"messages": history,
+		"count":    len(filtered),
+		"messages": filtered,
 	})
 }

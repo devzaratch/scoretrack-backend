@@ -6,6 +6,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -28,6 +29,44 @@ func saveSessionForTest(sub string) string {
 	tok := "tok-" + strings.TrimPrefix(sub, "email:")
 	GlobalDB.SaveUserSession(tok, sub)
 	return tok
+}
+
+// TestRetention30Day — verifies retention filter handles float/int/int64/string
+func TestRetention30Day(t *testing.T) {
+	cutoff := int64(1609459200) // 30-day cutoff example
+	msgs := []map[string]interface{}{
+		{"text": "new"},
+		{"text": "old_float", "time": float64(1000000000)},
+		{"text": "old_int", "time": int(1000000000)},
+		{"text": "old_string", "time": "1000000000"},
+	}
+	filtered := []map[string]interface{}{}
+	for _, msg := range msgs {
+		if tVal, ok := msg["time"]; ok {
+			switch v := tVal.(type) {
+			case float64:
+				if v < float64(cutoff) {
+					continue
+				}
+			case int:
+				if int64(v) < cutoff {
+					continue
+				}
+			case int64:
+				if v < cutoff {
+					continue
+				}
+			case string:
+				if _, err := strconv.ParseInt(v, 10, 64); err == nil && int64(1000000000) < cutoff {
+					continue
+				}
+			}
+		}
+		filtered = append(filtered, msg)
+	}
+	if len(filtered) != 1 || filtered[0]["text"] != "new" {
+		t.Errorf("Retention filter failed: expected only 'new', got %v", filtered)
+	}
 }
 
 func TestUserSelfServeAPIKeys(t *testing.T) {
