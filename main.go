@@ -170,6 +170,9 @@ func main() {
 	// 7. Season archive (แผนใหม่ข้อ 4) — เก็บผลแมตช์จบลง Redis/memory
 	go startArchiveSweeper()
 
+	// 8. Admin watchdog (roadmap รอบ 3 ข้อ 8) — พัง/กลับมาปกติ = แจ้งทันที (webhook หรือ LINE)
+	startAdminAlertWatchdog(ctx, time.Duration(getEnvInt("ADMIN_WATCHDOG_INTERVAL_SECONDS", 60))*time.Second)
+
 	// gin.New + middleware ของเราเอง (แผนข้อ 9): gin.Default() = [GIN] free text
 	// logger + Recovery ไม่มี field — ตอนนี้ request log เป็น JSON ทุกบรรทัด
 	// (observability.go) + panic เก็บ stack ลง structured log
@@ -1146,7 +1149,9 @@ const (
 //   - redis:     ต่อกับ Upstash/Redis สำเร็จ (ถ้า config ไว้) — degraded ถ้าหลุด
 //   - live_ws:   hub goroutine ตอบสนอง (ClientCount คืนได้ = Run() ยังรันอยู่)
 //   - providers: มี data snapshot ใน memory อย่างน้อย 1 ตัว (กัน cold start ปลอม)
-func handleHealthz(c *gin.Context) {
+// runHealthChecks — ตัวจริงของ health check (ใช้ตอนวิ่งกับ watchdog ด้วย)
+// คืน (healthy, checks) — handleHealthz แปะ HTTP status เอง, watchdog อ่านแฟล็กอย่างเดียว
+func runHealthChecks() (bool, gin.H) {
 	checks := gin.H{}
 	healthy := true
 
@@ -1182,6 +1187,12 @@ func handleHealthz(c *gin.Context) {
 		"registry":   registry.Counts(),
 		"dropped_ws": GlobalLiveHub.DroppedBroadcasts(),
 	}
+
+	return healthy, checks
+}
+
+func handleHealthz(c *gin.Context) {
+	healthy, checks := runHealthChecks()
 
 	status := http.StatusOK
 	state := "healthy"
