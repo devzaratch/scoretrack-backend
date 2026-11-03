@@ -116,6 +116,7 @@ func (rc *RedCardDetector) Process(matchID, homeName, awayName string, events []
 
 		if idInt > 0 {
 			go DispatchFCMPush(idInt, title, body)
+			go DispatchLINENotify(idInt, title, body) // LINE ขนานกับ FCM (env-gated)
 		}
 		// WS: คนที่เปิดหน้าเว็บอยู่เห็น toast ทันที (เทียบเคียง GOAL broadcast)
 		payload := map[string]interface{}{

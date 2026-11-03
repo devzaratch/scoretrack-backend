@@ -246,6 +246,7 @@ func (gd *GoalDetector) ProcessMatchUpdate(matchID int, homeScore, awayScore int
 
 		if pushEnabled {
 			go DispatchFCMPush(matchID, ev.Title, ev.Body)
+			go DispatchLINENotify(matchID, ev.Title, ev.Body) // LINE ขนานกับ FCM (env-gated)
 		}
 	}
 }

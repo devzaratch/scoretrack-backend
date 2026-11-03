@@ -95,6 +95,7 @@ func (r *PreMatchReminder) runOnce(windowMin int) {
 		title := "⏰ เกมกำลังจะเริ่ม!"
 		body := fmt.Sprintf("%s vs %s • เริ่มใน %d นาที (%s)", m.HomeTeam.Name, m.AwayTeam.Name, minutesLeft, m.League)
 		DispatchFCMPush(m.MatchID, title, body)
+		go DispatchLINENotify(m.MatchID, title, body) // LINE ขนานกับ FCM (env-gated)
 		r.markSent(m.MatchID, kickoff)
 		sentCount++
 		logInfof("⏰ pre-match reminder: match #%d %s (%d นาที)", m.MatchID, body, minutesLeft)
