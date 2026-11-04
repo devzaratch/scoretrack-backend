@@ -379,6 +379,9 @@ func main() {
 
 		// Predictions (leaderboard cached 2min, save 30/min)
 		rg.GET("/predictions/leaderboard", handlePredictionsLeaderboard)
+		// อันดับตามช่วงเวลา (ข้อ 4) — นับเฉพาะทาย "ในช่วง" (สัปดาห์จันทร์ 00:00 / เดือน 1)
+		rg.GET("/predictions/leaderboard/week", handlePeriodLeaderboard("week"))
+		rg.GET("/predictions/leaderboard/month", handlePeriodLeaderboard("month"))
 		rg.POST("/predictions/save", rateLimitMiddleware("prediction", RLPrediction, time.Minute), handleSavePrediction)
 		rg.GET("/predictions/my", handleGetMyPredictions)
 		rg.GET("/predictions/my/points", handleMyPoints)
