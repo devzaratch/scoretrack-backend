@@ -38,6 +38,7 @@ var imageAllowedSuffixes = []string{
 	"sofascore.com",
 	"googleusercontent.com",
 	"cloudfront.net",
+	"bbci.co.uk", // BBC Sport news thumbnails (ichef.bbci.co.uk — media:thumbnail in /api/news RSS)
 }
 
 type cachedImage struct {

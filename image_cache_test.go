@@ -14,6 +14,7 @@ func TestAllowedImageHost(t *testing.T) {
 		{"https://cdn.sofascore.com/images/upload/team/500.png", true},
 		{"https://lh3.googleusercontent.com/abc/photo.jpg", true},
 		{"https://d1xxxxx.cloudfront.net/image.png", true},
+		{"https://ichef.bbci.co.uk/ace/sport/240/cpsprodpb/5bf089a0-35ee-4f0f-882c-f9db59a1b045.jpg", true}, // news thumbnail host
 		{"http://evil.com/image.png", false},       // ไม่อยู่ใน allowlist
 		{"ftp://a.espncdn.com/image.png", false},    // scheme ไม่ถูกต้อง
 		{"", false},                                 // ว่าง
