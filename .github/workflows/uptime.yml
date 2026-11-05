@@ -1,16 +1,16 @@
 name: Uptime Monitor
 
-# à¸­à¸±à¸›à¹€à¸à¸£à¸”à¸ˆà¸²à¸ keep-alive.yml à¹€à¸”à¸´à¸¡ (à¸¥à¸šà¹„à¸›à¹à¸¥à¹‰à¸§ â€” à¸Ÿà¸±à¸‡à¸à¹Œà¸Šà¸±à¸™à¸›à¸¥à¸¸à¸ Render à¸¢à¸±à¸‡à¸­à¸¢à¸¹à¹ˆà¸„à¸£à¸šà¹ƒà¸™
-# à¸‚à¸±à¹‰à¸™ "à¹€à¸Šà¹‡à¸„" à¸™à¸µà¹‰) à¸™à¸­à¸à¸ˆà¸²à¸à¹„à¸¡à¹ˆà¹ƒà¸«à¹‰ Render à¸«à¸¥à¸±à¸šà¹à¸¥à¹‰à¸§ à¸¢à¸±à¸‡:
-# - à¹€à¸Šà¹‡à¸„ 3 à¸ˆà¸¸à¸”: backend root / web à¸«à¸™à¹‰à¸²à¹à¸£à¸ (SSR à¸œà¹ˆà¸²à¸™ proxy) / API à¸œà¹ˆà¸²à¸™ web proxy
-#   (à¸•à¸±à¸§à¸«à¸¥à¸±à¸‡à¸„à¸·à¸­à¸à¸²à¸£à¸¢à¸·à¸™à¸¢à¸±à¸™ prod à¸ˆà¸£à¸´à¸‡à¸§à¹ˆà¸² proxy chain à¸—à¸³à¸‡à¸²à¸™ â€” à¸„à¸¥à¸´à¸à¹à¸—à¸™ à¸‚à¹‰à¸­ 6 à¹„à¸”à¹‰à¸£à¸°à¸”à¸±à¸šà¸«à¸™à¸¶à¹ˆà¸‡)
-# - à¸ªà¸£à¸¸à¸›à¸ªà¸–à¸²à¸™à¸° + à¹€à¸§à¸¥à¸²à¸•à¸­à¸šà¸—à¸¸à¸à¸£à¸­à¸šà¹ƒà¸™ Actions job summary (à¹€à¸à¹‡à¸šà¹€à¸›à¹‡à¸™ history à¹ƒà¸™ Actions)
-# - à¸¥à¹ˆà¸¡à¸ˆà¸£à¸´à¸‡ (retry à¸„à¸£à¸šà¸¢à¸±à¸‡à¹„à¸¡à¹ˆ 200) -> à¹€à¸›à¸´à¸” GitHub issue à¸­à¸±à¸•à¹‚à¸™à¸¡à¸±à¸•à¸´ (label: uptime)
-#   à¸•à¸­à¸™à¸à¸¥à¸±à¸šà¸¡à¸²à¸­à¸­à¸™à¹„à¸¥à¸™à¹Œ -> à¸›à¸´à¸” issue à¸žà¸£à¹‰à¸­à¸¡ comment = à¸¡à¸µà¸šà¸±à¸™à¸—à¸¶à¸à¸–à¸²à¸§à¸£à¹ƒà¸™ Issues tab
-# - Retry 5 à¸„à¸£à¸±à¹‰à¸‡ à¸«à¹ˆà¸²à¸‡ 20 à¸§à¸´ à¸à¸±à¸™ false alarm à¸ˆà¸²à¸ Render cold start (~30-50 à¸§à¸´)
+# อัปเกรดจาก keep-alive.yml เดิม (ลบไปแล้ว — ฟังก์ชันปลุก Render ยังอยู่ครบใน
+# ขั้น "เช็ค" นี้) นอกจากไม่ให้ Render หลับแล้ว ยัง:
+# - เช็ค 3 จุด: backend root / web หน้าแรก (SSR ผ่าน proxy) / API ผ่าน web proxy
+#   (ตัวหลังคือการยืนยัน prod จริงว่า proxy chain ทำงาน — คลิกแทน ข้อ 6 ได้ระดับหนึ่ง)
+# - สรุปสถานะ + เวลาตอบทุกรอบใน Actions job summary (เก็บเป็น history ใน Actions)
+# - ล่มจริง (retry ครบยังไม่ 200) -> เปิด GitHub issue อัตโนมัติ (label: uptime)
+#   ตอนกลับมาออนไลน์ -> ปิด issue พร้อม comment = มีบันทึกถาวรใน Issues tab
+# - Retry 5 ครั้ง ห่าง 20 วิ กัน false alarm จาก Render cold start (~30-50 วิ)
 #
-# à¸«à¸¡à¸²à¸¢à¹€à¸«à¸•à¸¸: GitHub à¸›à¸´à¸” scheduled workflow à¹€à¸­à¸‡à¸–à¹‰à¸² repo à¹„à¸¡à¹ˆà¸¡à¸µ activity 60 à¸§à¸±à¸™
-# (à¸œà¸¥à¸±à¸/merge à¸­à¸°à¹„à¸£à¸à¹‡à¹„à¸”à¹‰à¸—à¸¸à¸ 2 à¹€à¸”à¸·à¸­à¸™à¹€à¸žà¸·à¹ˆà¸­à¸›à¸¥à¸¸à¸à¸à¸¥à¸±à¸šà¸¡à¸²)
+# หมายเหตุ: GitHub ปิด scheduled workflow เองถ้า repo ไม่มี activity 60 วัน
+# (ผลัก/merge อะไรก็ได้ทุก 2 เดือนเพื่อปลุกกลับมา)
 
 on:
   schedule:
@@ -33,7 +33,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
-      - name: à¹€à¸Šà¹‡à¸„à¸—à¸±à¹‰à¸‡ 3 à¸ˆà¸¸à¸” + à¸ˆà¸±à¸”à¸à¸²à¸£ issue à¸­à¸±à¸•à¹‚à¸™à¸¡à¸±à¸•à¸´
+      - name: เช็คทั้ง 3 จุด + จัดการ issue อัตโนมัติ
         run: |
           set -u
           BACKEND="https://scoretrack-backend.onrender.com"
@@ -41,7 +41,7 @@ jobs:
 
           declare -A CODE TIME OK
 
-          # check <name> <url> [body_pattern] â€” retry à¸ªà¸¹à¸‡à¸ªà¸¸à¸” 5 à¸„à¸£à¸±à¹‰à¸‡ à¸«à¹ˆà¸²à¸‡ 20 à¸§à¸´
+          # check <name> <url> [body_pattern] — retry สูงสุด 5 ครั้ง ห่าง 20 วิ
           check() {
             local name="$1" url="$2" pattern="${3:-}" i out code time
             for i in 1 2 3 4 5; do
@@ -50,10 +50,10 @@ jobs:
               time=${out##* }
               if [ "$code" = "200" ] && { [ -z "$pattern" ] || grep -q "$pattern" /tmp/body; }; then
                 OK["$name"]=1; CODE["$name"]="$code"; TIME["$name"]="$time"
-                echo "$name: online (à¸„à¸£à¸±à¹‰à¸‡à¸—à¸µà¹ˆ $i, ${time} à¸§à¸´)"
+                echo "$name: online (ครั้งที่ $i, ${time} วิ)"
                 return
               fi
-              echo "$name: à¸„à¸£à¸±à¹‰à¸‡à¸—à¸µà¹ˆ $i -> HTTP $code"
+              echo "$name: ครั้งที่ $i -> HTTP $code"
               [ $i -lt 5 ] && sleep 20
             done
             OK["$name"]=0; CODE["$name"]="$code"; TIME["$name"]="$time"
@@ -63,15 +63,15 @@ jobs:
           check web "$WEB/"
           check web-api "$WEB/api/matches"
 
-          # à¸ªà¸£à¸¸à¸›à¹ƒà¸™ job summary (à¹€à¸«à¹‡à¸™à¹€à¸›à¹‡à¸™à¸•à¸²à¸£à¸²à¸‡à¸—à¸¸à¸à¸£à¸­à¸šà¹ƒà¸™à¸«à¸™à¹‰à¸² Actions)
+          # สรุปใน job summary (เห็นเป็นตารางทุกรอบในหน้า Actions)
           {
-            echo "## â±ï¸ Uptime â€” $(date -u '+%Y-%m-%d %H:%M UTC')"
+            echo "## ⏱️ Uptime — $(date -u '+%Y-%m-%d %H:%M UTC')"
             echo ""
-            echo "| à¸ˆà¸¸à¸”à¸—à¸µà¹ˆà¹€à¸Šà¹‡à¸„ | à¸ªà¸–à¸²à¸™à¸° | HTTP | à¹€à¸§à¸¥à¸²à¸•à¸­à¸š |"
+            echo "| จุดที่เช็ค | สถานะ | HTTP | เวลาตอบ |"
             echo "|---|---|---|---|"
             for n in backend web web-api; do
-              if [ "${OK[$n]}" = "1" ]; then st="ðŸŸ¢ online"; else st="ðŸ”´ DOWN"; fi
-              echo "| \`$n\` | $st | ${CODE[$n]} | ${TIME[$n]} à¸§à¸´ |"
+              if [ "${OK[$n]}" = "1" ]; then st="🟢 online"; else st="🔴 DOWN"; fi
+              echo "| \`$n\` | $st | ${CODE[$n]} | ${TIME[$n]} วิ |"
             done
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -81,31 +81,31 @@ jobs:
           done
 
           gh label create uptime --color d73a4a \
-            --description "à¹€à¸›à¸´à¸”/à¸›à¸´à¸”à¸­à¸±à¸•à¹‚à¸™à¸¡à¸±à¸•à¸´à¹‚à¸”à¸¢ Uptime Monitor workflow" 2>/dev/null || true
+            --description "เปิด/ปิดอัตโนมัติโดย Uptime Monitor workflow" 2>/dev/null || true
 
           if [ -n "$failed" ]; then
             for n in $failed; do
-              # à¹€à¸›à¸´à¸” issue à¹€à¸‰à¸žà¸²à¸°à¸ˆà¸¸à¸”à¸—à¸µà¹ˆà¸¢à¸±à¸‡à¹„à¸¡à¹ˆà¸¡à¸µ issue à¹€à¸›à¸´à¸”à¸­à¸¢à¸¹à¹ˆ (à¸à¸±à¸™ spam à¸—à¸¸à¸ 10 à¸™à¸²à¸—à¸µ)
+              # เปิด issue เฉพาะจุดที่ยังไม่มี issue เปิดอยู่ (กัน spam ทุก 10 นาที)
               open=$(gh issue list --label uptime --state open --json title --jq \
                 '[.[] | select(.title | contains("[uptime] '"$n"' "))] | length' || echo 0)
               if [ "$open" = "0" ]; then
-                gh issue create --label uptime --title "ðŸ”´ [uptime] $n à¹„à¸¡à¹ˆà¸•à¸­à¸š" \
-                  --body "à¸à¸²à¸£à¹€à¸Šà¹‡à¸„à¸­à¸±à¸•à¹‚à¸™à¸¡à¸±à¸•à¸´à¸ˆà¸²à¸ GitHub Actions à¸žà¸šà¸§à¹ˆà¸² *$n* à¹„à¸¡à¹ˆà¸•à¸­à¸š HTTP 200 (retry à¸„à¸£à¸š 5 à¸„à¸£à¸±à¹‰à¸‡)
+                gh issue create --label uptime --title "🔴 [uptime] $n ไม่ตอบ" \
+                  --body "การเช็คอัตโนมัติจาก GitHub Actions พบว่า *$n* ไม่ตอบ HTTP 200 (retry ครบ 5 ครั้ง)
 
-                  à¸£à¸²à¸¢à¸¥à¸°à¹€à¸­à¸µà¸¢à¸”à¸£à¸­à¸šà¸™à¸µà¹‰: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+                  รายละเอียดรอบนี้: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
 
-                  _-issue à¸™à¸µà¹‰à¸ˆà¸°à¸–à¸¹à¸à¸›à¸´à¸”à¸­à¸±à¸•à¹‚à¸™à¸¡à¸±à¸•à¸´à¹€à¸¡à¸·à¹ˆà¸­ $n à¸à¸¥à¸±à¸šà¸¡à¸²à¸­à¸­à¸™à¹„à¸¥à¸™à¹Œ_" || true
+                  _-issue นี้จะถูกปิดอัตโนมัติเมื่อ $n กลับมาออนไลน์_" || true
               fi
             done
-            echo "::error::à¸ˆà¸¸à¸”à¸—à¸µà¹ˆà¸¥à¹ˆà¸¡:$failed"
+            echo "::error::จุดที่ล่ม:$failed"
             exit 1
           fi
 
-          # à¸—à¸¸à¸à¸ˆà¸¸à¸” online -> à¸›à¸´à¸” issue à¸—à¸µà¹ˆà¸„à¹‰à¸²à¸‡à¸­à¸¢à¸¹à¹ˆà¸‚à¸­à¸‡à¸ˆà¸¸à¸”à¸—à¸µà¹ˆà¸à¸¥à¸±à¸šà¸¡à¸² (à¸–à¹‰à¸²à¸¡à¸µ)
+          # ทุกจุด online -> ปิด issue ที่ค้างอยู่ของจุดที่กลับมา (ถ้ามี)
           for n in backend web web-api; do
             ids=$(gh issue list --label uptime --state open --json title,number --jq \
               '.[] | select(.title | contains("[uptime] '"$n"' ")) | .number' || true)
             for id in $ids; do
-              gh issue close "$id" --comment "âœ… $n à¸à¸¥à¸±à¸šà¸¡à¸²à¸­à¸­à¸™à¹„à¸¥à¸™à¹Œà¹à¸¥à¹‰à¸§ (à¸£à¸­à¸šà¸›à¸´à¸”: $GITHUB_RUN_ID)" || true
+              gh issue close "$id" --comment "✅ $n กลับมาออนไลน์แล้ว (รอบปิด: $GITHUB_RUN_ID)" || true
             done
           done
