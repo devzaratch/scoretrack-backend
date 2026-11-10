@@ -2,8 +2,11 @@ name: Uptime Monitor
 
 # อัปเกรดจาก keep-alive.yml เดิม (ลบไปแล้ว — ฟังก์ชันปลุก Render ยังอยู่ครบใน
 # ขั้น "เช็ค" นี้) นอกจากไม่ให้ Render หลับแล้ว ยัง:
-# - เช็ค 3 จุด: backend root / web หน้าแรก (SSR ผ่าน proxy) / API ผ่าน web proxy
+# - เช็ค 4 จุด: backend root / web หน้าแรก (SSR ผ่าน proxy) / API ผ่าน web proxy
 #   (ตัวหลังคือการยืนยัน prod จริงว่า proxy chain ทำงาน — คลิกแทน ข้อ 6 ได้ระดับหนึ่ง)
+#   / image proxy (แผนข้อ 1 รอบใหม่): URL รูปดึงสดจาก RSS BBC Sport ทุกรอบ — กัน
+#   กรณีรูปตัวอย่างถูกทาง BBC ลบทิ้ง (เคยพิสูจน์แล้วว่า RSS คือแหล่ง URL มีชีวิต)
+#   ถ้า RSS ล้มจะเป็น "skip" ไม่นับเป็น DOWN (กัน false alarm จากฝั่ง BBC)
 # - สรุปสถานะ + เวลาตอบทุกรอบใน Actions job summary (เก็บเป็น history ใน Actions)
 # - ล่มจริง (retry ครบยังไม่ 200) -> เปิด GitHub issue อัตโนมัติ (label: uptime)
 #   ตอนกลับมาออนไลน์ -> ปิด issue พร้อม comment = มีบันทึกถาวรใน Issues tab
@@ -33,7 +36,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
-      - name: เช็คทั้ง 3 จุด + จัดการ issue อัตโนมัติ
+      - name: เช็คทั้ง 4 จุด + จัดการ issue อัตโนมัติ
         run: |
           set -u
           BACKEND="https://scoretrack-backend.onrender.com"
@@ -63,21 +66,35 @@ jobs:
           check web "$WEB/"
           check web-api "$WEB/api/matches"
 
+          # image proxy — URL รูปดึงสดจาก RSS BBC Sport (host ใน allowlist ของ /api/img)
+          IMG_SRC=$(curl -s -o /tmp/rss -w "%{http_code}" --max-time 20 "https://feeds.bbci.co.uk/sport/football/rss.xml" >/dev/null && \
+            grep -o 'https://ichef[^"<> ]*' /tmp/rss | head -1 || true)
+          if [ -n "$IMG_SRC" ]; then
+            IMG_ENC=$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$IMG_SRC")
+            check img "$BACKEND/api/img?u=$IMG_ENC"
+          else
+            OK["img"]=2; CODE["img"]="skip"; TIME["img"]="-"
+            echo "img: skip (ดึง URL รูปจาก RSS BBC ล้ม — ไม่เป็นสัญญาณ DOWN)"
+          fi
+
           # สรุปใน job summary (เห็นเป็นตารางทุกรอบในหน้า Actions)
           {
             echo "## ⏱️ Uptime — $(date -u '+%Y-%m-%d %H:%M UTC')"
             echo ""
             echo "| จุดที่เช็ค | สถานะ | HTTP | เวลาตอบ |"
             echo "|---|---|---|---|"
-            for n in backend web web-api; do
-              if [ "${OK[$n]}" = "1" ]; then st="🟢 online"; else st="🔴 DOWN"; fi
+            for n in backend web web-api img; do
+              if [ "${OK[$n]}" = "1" ]; then st="🟢 online";
+              elif [ "${OK[$n]}" = "2" ]; then st="🟡 skip";
+              else st="🔴 DOWN"; fi
               echo "| \`$n\` | $st | ${CODE[$n]} | ${TIME[$n]} วิ |"
             done
           } >> "$GITHUB_STEP_SUMMARY"
 
           failed=""
-          for n in backend web web-api; do
-            [ "${OK[$n]}" = "1" ] || failed="$failed $n"
+          for n in backend web web-api img; do
+            [ "${OK[$n]}" = "0" ] || continue
+            failed="$failed $n"
           done
 
           gh label create uptime --color d73a4a \
@@ -102,7 +119,7 @@ jobs:
           fi
 
           # ทุกจุด online -> ปิด issue ที่ค้างอยู่ของจุดที่กลับมา (ถ้ามี)
-          for n in backend web web-api; do
+          for n in backend web web-api img; do
             ids=$(gh issue list --label uptime --state open --json title,number --jq \
               '.[] | select(.title | contains("[uptime] '"$n"' ")) | .number' || true)
             for id in $ids; do
