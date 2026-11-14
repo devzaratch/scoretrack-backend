@@ -342,6 +342,7 @@ func setupAdminRoutes(rg *gin.RouterGroup) {
 		admin.GET("/client-errors", handleAdminClientErrors)
 		admin.GET("/db-size", handleAdminDBSize)
 		admin.GET("/metrics", handleAdminMetrics)
+		admin.GET("/metrics/digest", handleAdminMetricsDigest)
 		admin.GET("/chat-reports", handleAdminChatReports)
 		admin.DELETE("/chat-reports/:idx", handleAdminChatReportDelete)
 		// Public API keys (แผนข้อ 7)

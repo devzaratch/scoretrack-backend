@@ -4,7 +4,6 @@ import (
 	"context"
 	"math"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -151,70 +150,14 @@ func recordMetric(name string, value float64, path string) {
 }
 
 // handleAdminMetrics — GET /api/admin/metrics: ยอดรวม pageviews + vitals (avg)
+// (แผน-v2 ข้อ 4: ตัวอ่าน aggregate ถูกแยกเป็น readMetricsAgg ให้ digest ใช้ตัวเดียวกัน)
 func handleAdminMetrics(c *gin.Context) {
-	type vitalStat struct {
-		Count int64   `json:"count"`
-		Avg   float64 `json:"avg"`
-	}
-	pageviews := map[string]int64{}
-	var pvTotal int64
-	vitals := map[string]vitalStat{}
-	actions := map[string]int64{}
-
-	if rdb != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		if v, err := rdb.Get(ctx, "metrics:pageviews:total").Int64(); err == nil {
-			pvTotal = v
-		}
-		if acts, err := rdb.HGetAll(ctx, "metrics:actions:count").Result(); err == nil {
-			for a, v := range acts {
-				if n, e := strconv.ParseInt(v, 10, 64); e == nil {
-					actions[a] = n
-				}
-			}
-		}
-		if paths, err := rdb.HGetAll(ctx, "metrics:pageviews:paths").Result(); err == nil {
-			for p, v := range paths {
-				if n, e := strconv.ParseInt(v, 10, 64); e == nil {
-					pageviews[p] = n
-				}
-			}
-		}
-		counts, _ := rdb.HGetAll(ctx, "metrics:vitals:count").Result()
-		sums, _ := rdb.HGetAll(ctx, "metrics:vitals:sum").Result()
-		for name, cv := range counts {
-			n, e := strconv.ParseInt(cv, 10, 64)
-			if e != nil || n == 0 {
-				continue
-			}
-			s, _ := strconv.ParseFloat(sums[name], 64)
-			vitals[name] = vitalStat{Count: n, Avg: math.Round(s/float64(n)*100) / 100}
-		}
-	} else {
-		metricsMu.Lock()
-		pvTotal = memPageviewsTotl
-		for p, v := range memPageviews {
-			pageviews[p] = v
-		}
-		for name, c := range memActions {
-			if c != nil && *c > 0 {
-				actions[name] = *c
-			}
-		}
-		for name, agg := range memVitals {
-			if agg.Count == 0 {
-				continue
-			}
-			vitals[name] = vitalStat{Count: agg.Count, Avg: math.Round(agg.Sum/float64(agg.Count)*100) / 100}
-		}
-		metricsMu.Unlock()
-	}
+	agg := readMetricsAgg()
 
 	c.JSON(http.StatusOK, gin.H{
-		"pageviews": gin.H{"total": pvTotal, "paths": pageviews},
-		"actions":   actions,                 // นับการใช้ฟีเจอร์ (ต่อชื่อ)
-		"vitals":    vitals,                  // avg หน่วย: CLS=จุด ที่เหลือ=มิลลิวินาที
+		"pageviews": gin.H{"total": agg.PVTotal, "paths": agg.Paths},
+		"actions":   agg.Actions,             // นับการใช้ฟีเจอร์ (ต่อชื่อ)
+		"vitals":    agg.Vitals,              // avg หน่วย: CLS=จุด ที่เหลือ=มิลลิวินาที
 		"server":    snapshotServerMetrics(), // แผนข้อ 9: requests/latency/cache/ws (observability.go)
 		"slo":       snapshotSLO(),           // แผนข้อ 9: SLO/alerts/freshness/providers/synthetic (slo.go)
 	})

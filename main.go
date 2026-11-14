@@ -170,6 +170,9 @@ func main() {
 	// 7. Season archive (แผนใหม่ข้อ 4) — เก็บผลแมตช์จบลง Redis/memory
 	go startArchiveSweeper()
 
+	// 7b. Metrics digest รายวัน (แผน-v2 ข้อ 4) — snapshot metrics ต่อวันให้ admin
+	go startMetricsDigest()
+
 	// 8. Admin watchdog (roadmap รอบ 3 ข้อ 8) — พัง/กลับมาปกติ = แจ้งทันที (webhook หรือ LINE)
 	startAdminAlertWatchdog(ctx, time.Duration(getEnvInt("ADMIN_WATCHDOG_INTERVAL_SECONDS", 60))*time.Second)
 
