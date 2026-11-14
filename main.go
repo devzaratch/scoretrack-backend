@@ -317,7 +317,7 @@ func main() {
 	// Register Routes under /api and /api/api (Safety Alias)
 	setupRoutes := func(rg *gin.RouterGroup) {
 		// Sources & Quota status (Phase 1: Data Layer)
-		rg.GET("/_sources", handleSourcesStatus)
+		rg.GET("/_sources", rateLimitMiddleware("read", RLReadHeavy, time.Minute), handleSourcesStatus)
 
 		// Search (limit 30/min — แพง GOAL API)
 		rg.GET("/search", rateLimitMiddleware("search", RLSearch, time.Minute), searchHandler)
@@ -373,24 +373,24 @@ func main() {
 		rg.GET("/user/interests", handleUserInterests)
 		rg.POST("/user/interests", rateLimitMiddleware("user-write", RLUserWrite, time.Minute), handleUserInterestToggle)
 
-		// PDPA (แผนข้อ 10): สิทธิเข้าถึง/ลบข้อมูลส่วนบุคคลของตัวเอง
-		rg.GET("/user/data", handleUserDataExport)
-		rg.DELETE("/user/account", handleDeleteAccount)
+		// PDPA (แผนข้อ 10): สิทธิเข้าถึง/ลบข้อมูลส่วนบุคคลของตัวเอง (แผน-v2 ข้อ 9: ใส่ read limit)
+		rg.GET("/user/data", rateLimitMiddleware("read", RLReadHeavy, time.Minute), handleUserDataExport)
+		rg.DELETE("/user/account", rateLimitMiddleware("read", RLReadHeavy, time.Minute), handleDeleteAccount)
 
 		// Predictions (leaderboard cached 2min, save 30/min)
-		rg.GET("/predictions/leaderboard", handlePredictionsLeaderboard)
+		rg.GET("/predictions/leaderboard", rateLimitMiddleware("read", RLReadHeavy, time.Minute), handlePredictionsLeaderboard)
 		// อันดับตามช่วงเวลา (ข้อ 4) — นับเฉพาะทาย "ในช่วง" (สัปดาห์จันทร์ 00:00 / เดือน 1)
-		rg.GET("/predictions/leaderboard/week", handlePeriodLeaderboard("week"))
-		rg.GET("/predictions/leaderboard/month", handlePeriodLeaderboard("month"))
+		rg.GET("/predictions/leaderboard/week", rateLimitMiddleware("read", RLReadHeavy, time.Minute), handlePeriodLeaderboard("week"))
+		rg.GET("/predictions/leaderboard/month", rateLimitMiddleware("read", RLReadHeavy, time.Minute), handlePeriodLeaderboard("month"))
 		rg.POST("/predictions/save", rateLimitMiddleware("prediction", RLPrediction, time.Minute), handleSavePrediction)
-		rg.GET("/predictions/my", handleGetMyPredictions)
-		rg.GET("/predictions/my/points", handleMyPoints)
+		rg.GET("/predictions/my", rateLimitMiddleware("read", RLReadHeavy, time.Minute), handleGetMyPredictions)
+		rg.GET("/predictions/my/points", rateLimitMiddleware("read", RLReadHeavy, time.Minute), handleMyPoints)
 
 		// Notification Preferences
 		rg.GET("/user/notifications", handleGetNotificationPrefs)
 		rg.POST("/user/notifications", rateLimitMiddleware("user-write", RLUserWrite, time.Minute), handleSaveNotificationPrefs)
-		rg.GET("/calendar", handleCalendar)
-		rg.GET("/calendar/ical", handleCalendarIcal)
+		rg.GET("/calendar", rateLimitMiddleware("read", RLReadHeavy, time.Minute), handleCalendar)
+		rg.GET("/calendar/ical", rateLimitMiddleware("read", RLReadHeavy, time.Minute), handleCalendarIcal)
 
 		// Auth V2 (แผนใหม่ข้อ 1) — register / login / verify / forgot / reset / refresh / me
 		rg.POST("/auth/register", rateLimitMiddleware("auth", RLAuth, time.Minute), handleRegister)
@@ -400,7 +400,7 @@ func main() {
 		rg.POST("/auth/forgot-password", rateLimitMiddleware("auth", RLAuth, time.Minute), handleForgotPassword)
 		rg.POST("/auth/reset-password", rateLimitMiddleware("auth", RLAuth, time.Minute), handleResetPassword)
 		rg.POST("/auth/refresh", rateLimitMiddleware("auth", RLAuth, time.Minute), handleRefresh)
-		rg.GET("/auth/me", handleMe)
+		rg.GET("/auth/me", rateLimitMiddleware("read", RLReadHeavy, time.Minute), handleMe)
 		rg.GET("/auth/sessions", rateLimitMiddleware("auth", RLAuth, time.Minute), handleAuthSessions)
 		rg.POST("/auth/logout-all", rateLimitMiddleware("auth", RLAuth, time.Minute), handleLogoutAll)
 		// Phase B ข้อ 5: API key self-service
@@ -1139,6 +1139,7 @@ const (
 	RLPrediction  = 30  // predictions save
 	RLUserWrite   = 30  // favorites/fcm/subscribe writes
 	RLImage       = 300 // image CDN proxy (/api/img — proxy ไฟล์รูปภาพ, 300/min)
+	RLReadHeavy   = 60  // leaderboard/calendar/user-read — อ่าน Redis aggregate หนัก กันยิงถี่ (แผน-v2 ข้อ 9)
 )
 
 // ---------------------------------------------------------
