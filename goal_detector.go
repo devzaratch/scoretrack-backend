@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -274,22 +273,8 @@ func DispatchFCMPush(matchID int, title, body string) {
 
 		successCount := 0
 		for _, token := range tokens {
-			v1Payload := map[string]interface{}{
-				"message": map[string]interface{}{
-					"token": token,
-					"notification": map[string]interface{}{
-						"title": title,
-						"body":  body,
-					},
-					"data": map[string]interface{}{
-						"match_id":     fmt.Sprintf("%d", matchID),
-						"click_action": fmt.Sprintf("/match/%d", matchID),
-					},
-				},
-			}
-
-			jsonData, err := json.Marshal(v1Payload)
-			if err != nil {
+			jsonData := fcmV1Payload(token, title, body, matchID)
+			if jsonData == nil {
 				continue
 			}
 
@@ -320,22 +305,8 @@ func DispatchFCMPush(matchID int, title, body string) {
 	}
 
 	// Construct FCM Multicast payload
-	payload := map[string]interface{}{
-		"registration_ids": tokens,
-		"notification": map[string]interface{}{
-			"title": title,
-			"body":  body,
-			"icon":  "/favicon.ico",
-			"sound": "default",
-		},
-		"data": map[string]interface{}{
-			"match_id":     matchID,
-			"click_action": fmt.Sprintf("/match/%d", matchID),
-		},
-	}
-
-	jsonData, err := json.Marshal(payload)
-	if err != nil {
+	jsonData := fcmLegacyPayload(tokens, title, body, matchID)
+	if jsonData == nil {
 		return
 	}
 
