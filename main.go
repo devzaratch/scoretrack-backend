@@ -143,6 +143,7 @@ func main() {
 	// เริ่มต้นหมุน Background Routine สำหรับยิง WebSocket Live Tick ทุก 5 วินาที
 	// 0. Initialize Persistent Database
 	InitDB()
+	logAuthConfigWarnings()
 
 	// 1. Start Non-blocking WebSocket Hubs
 	go GlobalLiveHub.Run()
@@ -765,6 +766,54 @@ func handleAuthLogout(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "logged_out"})
 }
 
+// googleClaims — claim ที่ tokeninfo ของ Google คืนมา (subset ที่เราใช้)
+type googleClaims struct {
+	Sub           string `json:"sub"`
+	Aud           string `json:"aud"`
+	Iss           string `json:"iss"`
+	Name          string `json:"name"`
+	Email         string `json:"email"`
+	EmailVerified string `json:"email_verified"`
+}
+
+// validateGoogleClaims — ตรวจ claim ของ Google ID token
+// clientID ว่าง = ยังไม่ตั้ง GOOGLE_CLIENT_ID (dev/local) -> ข้าม aud แต่ยังบังคับ
+// sub/iss/email_verified เพราะสองอย่างนั้นไม่มีเหตุผลให้ปิดใน env ไหนเลย
+func validateGoogleClaims(claims googleClaims, clientID string) error {
+	if strings.TrimSpace(claims.Sub) == "" {
+		return fmt.Errorf("token ไม่มี sub")
+	}
+	switch claims.Iss {
+	case "accounts.google.com", "https://accounts.google.com":
+	default:
+		return fmt.Errorf("issuer ไม่ใช่ของ Google: %q", claims.Iss)
+	}
+	if clientID != "" && claims.Aud != clientID {
+		return fmt.Errorf("aud ไม่ตรง client id ของเรา")
+	}
+	// tokeninfo คืน email_verified เป็น string ("true"/"false") — token ที่
+	// ไม่ผ่านการยืนยันอีเมลต้องไม่สร้างบัญชีให้ (อีเมลอาจไม่ใช่ของเจ้าของ token)
+	if claims.EmailVerified != "" && claims.EmailVerified != "true" {
+		return fmt.Errorf("email_verified=%q — อีเมลยังไม่ได้รับการยืนยัน", claims.EmailVerified)
+	}
+	return nil
+}
+
+// logAuthConfigWarnings — บอกตอน boot ว่า auth จะทำงานโหมดไหน
+// เงียบเกินไปคือปัญหา: SMTP ว่างทำให้สมัครสมาชิกไม่ได้ (503 by design)
+// และ GOOGLE_CLIENT_ID ว่างทำให้ตรวจ aud ของ Google token ไม่ได้
+func logAuthConfigWarnings() {
+	if strings.TrimSpace(os.Getenv("SMTP_HOST")) == "" {
+		logInfoln("⚠️ auth: SMTP_HOST ว่าง -> สมัครสมาชิก/รีเซ็ตรหัสผ่านจะตอบ 503 email_unavailable (ไม่ใช่ bug)")
+	}
+	if strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID")) == "" {
+		logInfoln("⚠️ auth: GOOGLE_CLIENT_ID ว่าง -> ไม่ตรวจ aud ของ Google ID token (ตั้งก่อนขึ้น production)")
+	}
+	if !envBool("AUTH_REQUIRE_VERIFIED", true) {
+		logInfoln("⚠️ auth: AUTH_REQUIRE_VERIFIED=false -> อนุญาต login ก่อนยืนยันอีเมล (ใช้เฉพาะ environment ทดสอบ)")
+	}
+}
+
 // verifyGoogleIDToken ตรวจ ID token กับ Google แล้วคืน sub + ชื่อ
 func verifyGoogleIDToken(ctx context.Context, idToken string) (sub, name string, err error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", "https://oauth2.googleapis.com/tokeninfo?id_token="+idToken, nil)
@@ -780,21 +829,15 @@ func verifyGoogleIDToken(ctx context.Context, idToken string) (sub, name string,
 	if res.StatusCode != http.StatusOK {
 		return "", "", fmt.Errorf("google tokeninfo status %d", res.StatusCode)
 	}
-	var info struct {
-		Sub   string `json:"sub"`
-		Aud   string `json:"aud"`
-		Name  string `json:"name"`
-		Email string `json:"email"`
-	}
+	var info googleClaims
 	if err := json.NewDecoder(res.Body).Decode(&info); err != nil {
 		return "", "", err
 	}
-	if info.Sub == "" {
-		return "", "", fmt.Errorf("token ไม่มี sub")
-	}
-	// กัน token จากแอปอื่น: aud ต้องตรง client id ของเรา (ถ้าตั้งไว้)
-	if want := strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID")); want != "" && info.Aud != want {
-		return "", "", fmt.Errorf("aud ไม่ตรง client id ของเรา")
+	// ตรวจ claim แบบเข้ม (D8): sub / iss / aud / email_verified
+	// เดิมตรวจแค่ aud และตรวจเฉพาะเมื่อตั้ง env -> token จากแอปอื่นหรือ token
+	// ที่ไม่ได้ผูกอีเมลที่ยืนยันแล้วสามารถใช้ได้
+	if err := validateGoogleClaims(info, strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID"))); err != nil {
+		return "", "", err
 	}
 	display := strings.TrimSpace(info.Name)
 	if display == "" {

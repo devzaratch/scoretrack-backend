@@ -16,6 +16,7 @@ func setupAuthV2Test(t *testing.T) {
 	t.Helper()
 	GlobalDB = newTestDB(t)
 	GlobalDB.EnsureAuthDefaults()
+	stubEmailSender(t)
 }
 
 func TestAuthV2RegisterVerifyLoginFlow(t *testing.T) {
@@ -24,7 +25,7 @@ func TestAuthV2RegisterVerifyLoginFlow(t *testing.T) {
 
 	// Register
 	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodPost, "/api/auth/register", strings.NewReader(`{"email":"test@example.com","password":"test123"}`))
+	req, _ := http.NewRequest(http.MethodPost, "/api/auth/register", strings.NewReader(`{"email":"test@example.com","password":"test1234"}`))
 	req.Header.Set("Content-Type", "application/json")
 	c, _ := gin.CreateTestContext(w)
 	c.Request = req
@@ -33,20 +34,15 @@ func TestAuthV2RegisterVerifyLoginFlow(t *testing.T) {
 		t.Fatalf("register fail code=%d body=%s", w.Code, w.Body.String())
 	}
 
-	// Login (before verify should succeed but verified=false)
+	// Login ก่อนยืนยันอีเมล -> ต้องถูกปฏิเสธ (ข้อ 3: บังคับ verified)
 	w2 := httptest.NewRecorder()
-	req2, _ := http.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"email":"test@example.com","password":"test123"}`))
+	req2, _ := http.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"email":"test@example.com","password":"test1234"}`))
 	req2.Header.Set("Content-Type", "application/json")
 	c2, _ := gin.CreateTestContext(w2)
 	c2.Request = req2
 	handleLogin(c2)
-	if w2.Code != 200 {
-		t.Fatalf("login fail code=%d body=%s", w2.Code, w2.Body.String())
-	}
-	var loginRes map[string]interface{}
-	json.Unmarshal(w2.Body.Bytes(), &loginRes)
-	if loginRes["verified"].(bool) != false {
-		t.Fatal("email not verified yet")
+	if w2.Code != http.StatusForbidden || !strings.Contains(w2.Body.String(), "email_not_verified") {
+		t.Fatalf("login before verify should be 403 email_not_verified, got code=%d body=%s", w2.Code, w2.Body.String())
 	}
 
 	// Verify
@@ -62,6 +58,22 @@ func TestAuthV2RegisterVerifyLoginFlow(t *testing.T) {
 	handleVerifyEmail(c3)
 	if w3.Code != 200 {
 		t.Fatalf("verify fail code=%d body=%s", w3.Code, w3.Body.String())
+	}
+
+	// Login หลังยืนยัน -> ผ่าน และ verified=true
+	w4 := httptest.NewRecorder()
+	req4, _ := http.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"email":"test@example.com","password":"test1234"}`))
+	req4.Header.Set("Content-Type", "application/json")
+	c4, _ := gin.CreateTestContext(w4)
+	c4.Request = req4
+	handleLogin(c4)
+	if w4.Code != 200 {
+		t.Fatalf("login after verify fail code=%d body=%s", w4.Code, w4.Body.String())
+	}
+	var loginRes map[string]interface{}
+	json.Unmarshal(w4.Body.Bytes(), &loginRes)
+	if loginRes["verified"].(bool) != true {
+		t.Fatal("expected verified=true after email verification")
 	}
 
 	prof := GlobalDB.GetUserProfileByEmail("test@example.com")
