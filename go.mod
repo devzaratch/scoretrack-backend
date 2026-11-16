@@ -7,7 +7,7 @@ require (
 	github.com/gin-contrib/cors v1.7.7
 	github.com/gin-gonic/gin v1.12.0
 	github.com/gorilla/websocket v1.5.3
-	github.com/lib/pq v1.10.9
+	github.com/lib/pq v1.12.3
 	github.com/redis/go-redis/v9 v9.22.0
 	golang.org/x/crypto v0.57.0
 )
