@@ -39,7 +39,9 @@ REDIS_ADDR=localhost:6379
 REDIS_PASSWORD=
 REDIS_DB=0
 
-# อีเมล SMTP (ถ้าไม่กำหนดจะใช้ logging แทนการส่งจริง)
+# อีเมล SMTP — จำเป็นสำหรับสมัครสมาชิก/รีเซ็ตรหัสผ่าน
+# ถ้าเว้น SMTP_HOST ไว้: register/forgot จะปฏิเสธ (503 email_unavailable) และ
+# "ไม่" พิมพ์รหัสลง log ยกเว้นตั้ง AUTH_LOG_CODES=true (dev เท่านั้น)
 SMTP_HOST=
 SMTP_PORT=587
 SMTP_USER=
@@ -49,6 +51,15 @@ SMTP_FROM=
 # Auth V2
 JWT_SECRET=your-secret-change-me
 ADMIN_TOKEN=your-admin-token-change-me
+# บังคับยืนยันอีเมลก่อน login (ปิดได้เฉพาะ environment ทดสอบ)
+AUTH_REQUIRE_VERIFIED=true
+# lockout ต่อบัญชี (กัน credential stuffing ที่กระจาย IP)
+AUTH_MAX_FAILS=5
+AUTH_LOCK_MINUTES=10
+# จำนวนครั้งที่เดารหัสยืนยัน/รีเซ็ตผิดได้ก่อนรหัสถูกลบทิ้ง
+AUTH_MAX_CODE_ATTEMPTS=5
+# Google ID token: ตั้งเพื่อบังคับตรวจ aud (ถ้าว่างจะ log warning ตอน boot)
+GOOGLE_CLIENT_ID=
 
 # ผู้ให้บริการข้อมูลแมตช์ (เลือกได้หลายตัว)
 GOAL_API_KEY=
@@ -136,7 +147,9 @@ go build .
 - ระบบแบนผู้ใช้จะตรวจสอบทุกครั้งที่เข้าสู่ระบบและรีเฟรชโทเค็น
 - คุกกี้ session ใช้ `HttpOnly` และ `SameSite=Lax` เพื่อความปลอดภัย
 - ระบบอัปเดตคะแนนและใบแดงแบบเรียลไทม์ผ่าน WebSocket channel
-- การส่งอีเมลจะทำงานก็ต่อเมื่อมีการตั้งค่า SMTP env vars เท่านั้น มิฉะนั้นจะ log ข้อความแทน
+- การส่งอีเมลจะทำงานก็ต่อเมื่อมีการตั้งค่า SMTP env vars; ถ้าไม่ได้ตั้ง register/forgot-password จะปฏิเสธด้วย 503 `email_unavailable` (ไม่สร้างบัญชีที่ยืนยันไม่ได้ และไม่พิมพ์รหัสลง log เว้นแต่ `AUTH_LOG_CODES=true`)
+- Login บังคับ `verified` (`AUTH_REQUIRE_VERIFIED`), ล็อกบัญชีชั่วคราวหลังใส่รหัสผิด `AUTH_MAX_FAILS` ครั้ง และจำกัดการเดารหัสยืนยัน/รีเซ็ตที่ `AUTH_MAX_CODE_ATTEMPTS` ครั้ง
+- รีเซ็ตรหัสผ่านสำเร็จ = ตัด session และ refresh token เดิมทั้งหมดของบัญชีนั้น
 
 ## CI / ความปลอดภัย
 
