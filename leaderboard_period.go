@@ -85,7 +85,13 @@ func computePeriodLeaderboard(kind string) []LeaderboardEntry {
 		if entries[i].ExactHits != entries[j].ExactHits {
 			return entries[i].ExactHits > entries[j].ExactHits
 		}
-		return entries[i].Predictions > entries[j].Predictions
+		if entries[i].Predictions != entries[j].Predictions {
+			return entries[i].Predictions > entries[j].Predictions
+		}
+		// เสมอกันทุกตัวชี้วัด -> เรียงตาม UserID เพื่อให้ผลคงที่
+		// (entries มาจาก map ที่ iterate แบบสุ่ม ถ้าไม่ tie-break อันดับจะสลับไปมา
+		// ทุก request และเทสต์ที่คาดลำดับจะแดงแบบสุ่ม)
+		return entries[i].UserID < entries[j].UserID
 	})
 	return entries
 }

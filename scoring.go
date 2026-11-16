@@ -156,7 +156,7 @@ func computeLeaderboard() []LeaderboardEntry {
 		entries = append(entries, entry)
 	}
 
-	// เรียง: คะแนนมากสุด -> ถูกเป๊ะมากสุด -> ทำนายเยอะสุด
+	// เรียง: คะแนนมากสุด -> ถูกเป๊ะมากสุด -> ทำนายเยอะสุด -> UserID
 	sort.Slice(entries, func(i, j int) bool {
 		if entries[i].Points != entries[j].Points {
 			return entries[i].Points > entries[j].Points
@@ -164,7 +164,12 @@ func computeLeaderboard() []LeaderboardEntry {
 		if entries[i].ExactHits != entries[j].ExactHits {
 			return entries[i].ExactHits > entries[j].ExactHits
 		}
-		return entries[i].Predictions > entries[j].Predictions
+		if entries[i].Predictions != entries[j].Predictions {
+			return entries[i].Predictions > entries[j].Predictions
+		}
+		// tie-break สุดท้ายด้วย UserID — entries มาจาก map (iterate แบบสุ่ม)
+		// ถ้าไม่กำหนด อันดับของคนคะแนนเท่ากันจะสลับทุก request
+		return entries[i].UserID < entries[j].UserID
 	})
 	return entries
 }
@@ -183,6 +188,7 @@ func userPoints(userID string) map[string]interface{} {
 		points   int
 		created  int64
 		finished bool
+		matchID  string
 	}
 	results := make([]scored, 0, len(preds))
 	for matchID, predRaw := range preds {
@@ -201,13 +207,18 @@ func userPoints(userID string) map[string]interface{} {
 		} else if p == 1 {
 			correct++
 		}
-		results = append(results, scored{points: p, created: predictionCreatedAt(pred), finished: true})
+		results = append(results, scored{points: p, created: predictionCreatedAt(pred), finished: true, matchID: matchID})
 	}
 
 	// streak = ทายถูกติดกันจากล่าสุด (เรียงตามเวลาที่ทาย — ใกล้เคียงลำดับเวลาแมตช์)
+	// tie-break ด้วย matchID: ทายหลายแมตช์ในวินาทีเดียวกันได้ (createdAt ละเอียด
+	// แค่ระดับวินาที) ถ้าไม่ tie-break ลำดับจะขึ้นกับ map iteration -> streak ไม่คงที่
 	streak := 0
 	sort.Slice(results, func(i, j int) bool {
-		return results[i].created > results[j].created
+		if results[i].created != results[j].created {
+			return results[i].created > results[j].created
+		}
+		return results[i].matchID > results[j].matchID
 	})
 	for _, r := range results {
 		if r.points > 0 {

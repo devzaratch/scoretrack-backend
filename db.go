@@ -350,7 +350,11 @@ func (db *PersistentDB) ListAPIKeys() []APIKeyRecord {
 		if out[i].LastUsedAt != out[j].LastUsedAt {
 			return out[i].LastUsedAt > out[j].LastUsedAt
 		}
-		return out[i].CreatedAt > out[j].CreatedAt
+		if out[i].CreatedAt != out[j].CreatedAt {
+			return out[i].CreatedAt > out[j].CreatedAt
+		}
+		// map iteration สุ่ม -> tie-break ด้วย KeyPrefix ให้หน้า admin ไม่สลับแถว
+		return out[i].KeyPrefix < out[j].KeyPrefix
 	})
 	return out
 }
@@ -373,7 +377,10 @@ func (db *PersistentDB) ListAPIKeyViews() []APIKeyView {
 		if out[i].LastUsedAt != out[j].LastUsedAt {
 			return out[i].LastUsedAt > out[j].LastUsedAt
 		}
-		return out[i].CreatedAt > out[j].CreatedAt
+		if out[i].CreatedAt != out[j].CreatedAt {
+			return out[i].CreatedAt > out[j].CreatedAt
+		}
+		return out[i].KeyID < out[j].KeyID
 	})
 	return out
 }
