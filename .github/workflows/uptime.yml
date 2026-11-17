@@ -1,28 +1,38 @@
 name: Uptime Monitor
 
-# อัปเกรดจาก keep-alive.yml เดิม (ลบไปแล้ว — ฟังก์ชันปลุก Render ยังอยู่ครบใน
-# ขั้น "เช็ค" นี้) นอกจากไม่ให้ Render หลับแล้ว ยัง:
-# - เช็ค 4 จุด: backend root / web หน้าแรก (SSR ผ่าน proxy) / API ผ่าน web proxy
-#   (ตัวหลังคือการยืนยัน prod จริงว่า proxy chain ทำงาน — คลิกแทน ข้อ 6 ได้ระดับหนึ่ง)
-#   / image proxy (แผนข้อ 1 รอบใหม่): URL รูปดึงสดจาก RSS BBC Sport ทุกรอบ — กัน
-#   กรณีรูปตัวอย่างถูกทาง BBC ลบทิ้ง (เคยพิสูจน์แล้วว่า RSS คือแหล่ง URL มีชีวิต)
-#   ถ้า RSS ล้มจะเป็น "skip" ไม่นับเป็น DOWN (กัน false alarm จากฝั่ง BBC)
-# - สรุปสถานะ + เวลาตอบทุกรอบใน Actions job summary (เก็บเป็น history ใน Actions)
-# - ล่มจริง (retry ครบยังไม่ 200) -> เปิด GitHub issue อัตโนมัติ (label: uptime)
-#   ตอนกลับมาออนไลน์ -> ปิด issue พร้อม comment = มีบันทึกถาวรใน Issues tab
-# - Retry 5 ครั้ง ห่าง 20 วิ กัน false alarm จาก Render cold start (~30-50 วิ)
+# เช็ค prod จากภายนอกทุก 5 นาที — ตัวเดียวในระบบที่รู้ว่าเว็บล่มตอน backend ล่ม
+# (alert ในตัว backend คือ slo.go/admin_alert.go จะตายไปพร้อม process)
+#
+# สิ่งที่ทำ:
+# - เช็ค 4 จุดพร้อมกัน (ขนาน): backend root / web หน้าแรก (SSR ผ่าน proxy) /
+#   API ผ่าน web proxy / image proxy (URL รูปดึงสดจาก RSS BBC Sport)
+#   ถ้าดึง RSS ไม่ได้ = "skip" ไม่นับ DOWN (กัน false alarm จากฝั่ง BBC)
+# - retry 3 ครั้ง ห่าง 10 วิ ต่อจุด กัน false alarm จาก Render cold start (~30-50 วิ)
+# - สรุปตาราง + latency ทุกรอบใน job summary และติดธง 🐢 เมื่อตอบช้าเกิน 10 วิ
+#   (ช้าไม่ใช่ DOWN — Render cold start ทำให้ช้าเป็นเรื่องปกติ จะแจ้งเตือนก็มีแต่ noise)
+# - GitHub issue (label: uptime) เป็น state store ของการแจ้งเตือน:
+#   * เพิ่งเปิด issue ใหม่  = transition ปกติ -> DOWN  -> ส่งแจ้งเตือน 1 ครั้ง
+#   * เพิ่งปิด issue       = transition กลับมา -> RECOVERY -> ส่งแจ้งเตือน 1 ครั้ง
+#   รอบถัด ๆ ไปสถานะไม่เปลี่ยน จึงไม่ส่งซ้ำ (ไม่ต้องมี DB)
+# - ส่งผ่าน `go run ./cmd/alert` (Telegram + webhook) ถ้ายังไม่ตั้ง secret = skip ไม่ล้ม
+#   และถ้าตัวส่งล้มก็ไม่ทำให้การเช็ค/เปิด issue ล้มตาม (ใช้ ::warning::)
+#
+# Secrets ที่ต้องตั้ง (Settings > Secrets and variables > Actions):
+#   ALERT_TELEGRAM_TOKEN, ALERT_TELEGRAM_CHAT_ID, ALERT_WEBHOOK_URL (ตั้งอันไหนก็ได้)
 #
 # หมายเหตุ: GitHub ปิด scheduled workflow เองถ้า repo ไม่มี activity 60 วัน
 # (ผลัก/merge อะไรก็ได้ทุก 2 เดือนเพื่อปลุกกลับมา)
 
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 concurrency:
   group: uptime
-  cancel-in-progress: true
+  # ไม่ยกเลิกรอบที่กำลังทำ: ถ้ารอบก่อนกำลัง retry อยู่แล้วรอบใหม่มาฆ่า
+  # เราจะไม่ได้ทั้งผลเช็คและ issue ที่เป็น state ของการแจ้งเตือน
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -31,69 +41,108 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
+      ALERT_TELEGRAM_TOKEN: ${{ secrets.ALERT_TELEGRAM_TOKEN }}
+      ALERT_TELEGRAM_CHAT_ID: ${{ secrets.ALERT_TELEGRAM_CHAT_ID }}
+      ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+      ALERT_SOURCE: uptime
     steps:
-      - name: เช็คทั้ง 4 จุด + จัดการ issue อัตโนมัติ
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: เช็คทั้ง 4 จุด + จัดการ issue + แจ้งเตือนตอน transition
         run: |
           set -u
           BACKEND="https://scoretrack-backend.onrender.com"
           WEB="https://livescore-web-self.vercel.app"
+          SLOW=10   # วินาที: เกินนี้ติดธง 🐢 แต่ไม่แจ้งเตือน
 
-          declare -A CODE TIME OK
+          RUN_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 
-          # check <name> <url> [body_pattern] — retry สูงสุด 5 ครั้ง ห่าง 20 วิ
+          # alert <level> <title> <body> — ตัวส่งล้มห้ามทำให้การเช็คล้ม
+          alert() {
+            go run ./cmd/alert -level "$1" -title "$2" -body "$3" ||
+              echo "::warning::ส่งแจ้งเตือนไม่สำเร็จ (การเช็คทำงานต่อไปปกติ)"
+          }
+
+          # check <name> <url> [body_pattern] — retry สูงสุด 3 ครั้ง ห่าง 10 วิ
+          # เขียนผลเป็นไฟล์ "/tmp/check-<name>" = "<ok> <code> <time>"
+          #   1 = online, 0 = DOWN, 2 = skip
           check() {
             local name="$1" url="$2" pattern="${3:-}" i out code time
-            for i in 1 2 3 4 5; do
-              out=$(curl -s -o /tmp/body -w "%{http_code} %{time_total}" --max-time 40 "$url" || true)
+            for i in 1 2 3; do
+              out=$(curl -s -o "/tmp/body-$name" -w "%{http_code} %{time_total}" --max-time 40 "$url" || true)
               code=${out%% *}
               time=${out##* }
-              if [ "$code" = "200" ] && { [ -z "$pattern" ] || grep -q "$pattern" /tmp/body; }; then
-                OK["$name"]=1; CODE["$name"]="$code"; TIME["$name"]="$time"
+              if [ "$code" = "200" ] && { [ -z "$pattern" ] || grep -q "$pattern" "/tmp/body-$name"; }; then
+                echo "1 $code $time" > "/tmp/check-$name"
                 echo "$name: online (ครั้งที่ $i, ${time} วิ)"
                 return
               fi
               echo "$name: ครั้งที่ $i -> HTTP $code"
-              [ $i -lt 5 ] && sleep 20
+              [ "$i" -lt 3 ] && sleep 10
             done
-            OK["$name"]=0; CODE["$name"]="$code"; TIME["$name"]="$time"
+            echo "0 $code $time" > "/tmp/check-$name"
           }
 
-          check backend "$BACKEND/" '"status"'
-          check web "$WEB/"
-          check web-api "$WEB/api/matches"
+          # เช็คขนานกัน: ช้าสุดต่อรอบ = จุดที่ช้าที่สุด ไม่ใช่ผลรวม 4 จุด
+          check backend "$BACKEND/" '"status"' &
+          check web "$WEB/" &
+          check web-api "$WEB/api/matches" &
+          (
+            # image proxy — URL รูปดึงสดจาก RSS BBC Sport (host ใน allowlist ของ /api/img)
+            IMG_SRC=$(curl -s -o /tmp/rss -w "%{http_code}" --max-time 20 "https://feeds.bbci.co.uk/sport/football/rss.xml" >/dev/null &&
+              grep -o 'https://ichef[^"<> ]*' /tmp/rss | head -1 || true)
+            if [ -n "$IMG_SRC" ]; then
+              IMG_ENC=$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$IMG_SRC")
+              check img "$BACKEND/api/img?u=$IMG_ENC"
+            else
+              echo "2 skip -" > /tmp/check-img
+              echo "img: skip (ดึง URL รูปจาก RSS BBC ล้ม — ไม่เป็นสัญญาณ DOWN)"
+            fi
+          ) &
+          wait
 
-          # image proxy — URL รูปดึงสดจาก RSS BBC Sport (host ใน allowlist ของ /api/img)
-          IMG_SRC=$(curl -s -o /tmp/rss -w "%{http_code}" --max-time 20 "https://feeds.bbci.co.uk/sport/football/rss.xml" >/dev/null && \
-            grep -o 'https://ichef[^"<> ]*' /tmp/rss | head -1 || true)
-          if [ -n "$IMG_SRC" ]; then
-            IMG_ENC=$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$IMG_SRC")
-            check img "$BACKEND/api/img?u=$IMG_ENC"
-          else
-            OK["img"]=2; CODE["img"]="skip"; TIME["img"]="-"
-            echo "img: skip (ดึง URL รูปจาก RSS BBC ล้ม — ไม่เป็นสัญญาณ DOWN)"
-          fi
+          # กันกรณีไฟล์ผลไม่ถูกเขียน (สคริปต์ย่อยตาย) — ถือเป็น DOWN ไม่ใช่ปล่อยตัวแปรค้าง
+          for n in backend web web-api img; do
+            [ -s "/tmp/check-$n" ] || echo "0 ? -" > "/tmp/check-$n"
+          done
 
-          # สรุปใน job summary (เห็นเป็นตารางทุกรอบในหน้า Actions)
+          # ตารางสรุปใน job summary (เห็นเป็น history ทุกรอบในหน้า Actions)
+          slow_list=""
           {
             echo "## ⏱️ Uptime — $(date -u '+%Y-%m-%d %H:%M UTC')"
             echo ""
-            echo "| จุดที่เช็ค | สถานะ | HTTP | เวลาตอบ |"
-            echo "|---|---|---|---|"
+            echo "| จุดที่เช็ค | สถานะ | HTTP | เวลาตอบ | หมายเหตุ |"
+            echo "|---|---|---|---|---|"
             for n in backend web web-api img; do
-              if [ "${OK[$n]}" = "1" ]; then st="🟢 online";
-              elif [ "${OK[$n]}" = "2" ]; then st="🟡 skip";
+              read -r ok code time < "/tmp/check-$n"
+              if [ "$ok" = "1" ]; then st="🟢 online";
+              elif [ "$ok" = "2" ]; then st="🟡 skip";
               else st="🔴 DOWN"; fi
-              echo "| \`$n\` | $st | ${CODE[$n]} | ${TIME[$n]} วิ |"
+              note="-"
+              if awk -v t="$time" -v s="$SLOW" 'BEGIN{exit !(t+0 > s)}'; then
+                note="🐢 ช้า (>${SLOW} วิ)"
+                slow_list="$slow_list $n"
+              fi
+              echo "| \`$n\` | $st | $code | $time วิ | $note |"
             done
           } >> "$GITHUB_STEP_SUMMARY"
 
+          if [ -n "$slow_list" ]; then
+            echo "::warning::ตอบช้าเกิน ${SLOW} วิ:$slow_list (ไม่นับ DOWN)"
+          fi
+
           failed=""
           for n in backend web web-api img; do
-            [ "${OK[$n]}" = "0" ] || continue
+            read -r ok _code _time < "/tmp/check-$n"
+            [ "$ok" = "0" ] || continue
             failed="$failed $n"
           done
 
@@ -102,27 +151,35 @@ jobs:
 
           if [ -n "$failed" ]; then
             for n in $failed; do
-              # เปิด issue เฉพาะจุดที่ยังไม่มี issue เปิดอยู่ (กัน spam ทุก 10 นาที)
+              # เปิด issue เฉพาะจุดที่ยังไม่มี issue เปิดอยู่ = จุดเปลี่ยนสถานะจริง
               open=$(gh issue list --label uptime --state open --json title --jq \
                 '[.[] | select(.title | contains("[uptime] '"$n"' "))] | length' || echo 0)
+              open=${open:-0}
               if [ "$open" = "0" ]; then
+                read -r _ok _code time < "/tmp/check-$n"
                 gh issue create --label uptime --title "🔴 [uptime] $n ไม่ตอบ" \
-                  --body "การเช็คอัตโนมัติจาก GitHub Actions พบว่า *$n* ไม่ตอบ HTTP 200 (retry ครบ 5 ครั้ง)
+                  --body "การเช็คอัตโนมัติจาก GitHub Actions พบว่า *$n* ไม่ตอบ HTTP 200 (retry ครบ 3 ครั้ง, ครั้งสุดท้ายใช้เวลา ${time} วิ)
 
-                  รายละเอียดรอบนี้: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+                  รายละเอียดรอบนี้: $RUN_URL
 
                   _-issue นี้จะถูกปิดอัตโนมัติเมื่อ $n กลับมาออนไลน์_" || true
+                # แจ้งเตือนเฉพาะตอนเปิด issue ใหม่ (transition) ไม่ใช่ทุก 5 นาที
+                alert down "[uptime] $n ไม่ตอบ" \
+                  "$(printf 'จุดที่ล่มในรอบนี้:%s\nHTTP/เวลา: %s / %s วิ\nรอบ: %s' "$failed" "$_code" "$time" "$RUN_URL")"
               fi
             done
             echo "::error::จุดที่ล่ม:$failed"
             exit 1
           fi
 
-          # ทุกจุด online -> ปิด issue ที่ค้างอยู่ของจุดที่กลับมา (ถ้ามี)
+          # ทุกจุด online -> ปิด issue ที่ค้างอยู่ของจุดที่กลับมา (ถ้ามี) + แจ้ง RECOVERY
           for n in backend web web-api img; do
             ids=$(gh issue list --label uptime --state open --json title,number --jq \
               '.[] | select(.title | contains("[uptime] '"$n"' ")) | .number' || true)
             for id in $ids; do
-              gh issue close "$id" --comment "✅ $n กลับมาออนไลน์แล้ว (รอบปิด: $GITHUB_RUN_ID)" || true
+              if gh issue close "$id" --comment "✅ $n กลับมาออนไลน์แล้ว (รอบปิด: $GITHUB_RUN_ID)"; then
+                alert recovery "[uptime] $n กลับมาออนไลน์" \
+                  "$(printf 'ปิด issue #%s แล้ว\nรอบ: %s' "$id" "$RUN_URL")"
+              fi
             done
           done

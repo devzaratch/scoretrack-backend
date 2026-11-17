@@ -1,0 +1,61 @@
+name: CI Alert
+
+# แจ้งเตือนเมื่อ CI ของ main แดง — ปกติไม่มีใครรู้จนกว่าจะเปิด Actions ดูเอง
+# (เคสจริง: Lighthouse แดง 4 run ติดกันโดยไม่มีใครเห็น)
+#
+# ตัวส่งคือ cmd/alert ตัวเดียวกับที่ uptime.yml ใช้ — env ชุดเดียวกัน
+#   ALERT_TELEGRAM_TOKEN, ALERT_TELEGRAM_CHAT_ID, ALERT_WEBHOOK_URL (ตั้งอันไหนก็ได้)
+#   ไม่ตั้งเลย = skip แต่ workflow ยัง "สำเร็จ" (ไม่กลบสีแดงของ CI)
+#
+# ยิงเฉพาะ: push เข้า main + CI จบแบบ failure
+# PR ที่แดงไม่แจ้ง (คนเปิด PR เห็นอยู่แล้ว) — กัน noise
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+concurrency:
+  group: ci-alert-backend
+  cancel-in-progress: true
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  notify:
+    if: >-
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ALERT_TELEGRAM_TOKEN: ${{ secrets.ALERT_TELEGRAM_TOKEN }}
+      ALERT_TELEGRAM_CHAT_ID: ${{ secrets.ALERT_TELEGRAM_CHAT_ID }}
+      ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+      ALERT_SOURCE: ci-backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: แจ้งเตือน CI แดงบน main
+        env:
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          RUN_NUMBER: ${{ github.event.workflow_run.run_number }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_MSG: ${{ github.event.workflow_run.head_commit.message }}
+          ACTOR: ${{ github.event.workflow_run.actor.login }}
+        run: |
+          set -u
+          SUBJECT=$(printf '%s' "$HEAD_MSG" | head -1 | cut -c1-120)
+          go run ./cmd/alert -level down \
+            -title "CI แดงบน main (backend) #$RUN_NUMBER" \
+            -body "$(printf 'commit: %s\nข้อความ: %s\nผู้ push: %s\nรอบที่: %s\nrun: %s' \
+              "${HEAD_SHA:0:7}" "$SUBJECT" "$ACTOR" "$RUN_ATTEMPT" "$RUN_URL")"

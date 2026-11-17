@@ -154,5 +154,10 @@ go build .
 ## CI / ความปลอดภัย
 
 - `.github/workflows/ci.yml` — build + vet + test ทุก push (Go 1.26) และรัน `govulncheck` สแกนช่องโหว่ dependency อัตโนมัติ
+- `.github/workflows/uptime.yml` — เช็ค prod 4 จุดทุก 5 นาที ใช้ GitHub issue เป็น state: แจ้ง Telegram/webhook เฉพาะตอน**เปิด** issue (ล่ม) และตอน**ปิด** issue (กลับมา) ไม่แจ้งซ้ำทุกรอบ
+- `.github/workflows/ci-alert.yml` — แจ้งเมื่อ CI บน `main` จบแบบ failure (PR แดงไม่แจ้ง)
+- `cmd/alert/` — ตัวส่งแจ้งเตือนที่ workflow เรียก (`go run ./cmd/alert`): Telegram (`ALERT_TELEGRAM_TOKEN` + `ALERT_TELEGRAM_CHAT_ID`) และ/หรือ webhook (`ALERT_WEBHOOK_URL`), retry 3 ครั้ง, timeout 10 วิ, ไม่พิมพ์ token ลง log, ไม่ตั้ง secret = skip (exit 0), `-strict` = exit 1
+  - เทสต์: `go test ./cmd/alert`
+  - ภาพรวมทุกช่องทาง + วิธีรับมือ: [`docs/ALERTING.md`](https://github.com/devzaratch/scoretrack-infra/blob/main/docs/ALERTING.md)
 - `golang.org/x/net` v0.60+ / `x/crypto` v0.57+ — ปิดช่อง GO-2026-6611/6610/6603/5026
 - `migrations/003_chat_tables.sql` มีตาราง `chat_messages` เป็น backup/future-proofing เท่านั้น — ประวัติแชทจริงเก็บใน `StoreData` ผ่าน `SaveChatMessage` (`db.go`) และอ่านด้วย `GET /chat/history/:matchId`
