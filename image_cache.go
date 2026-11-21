@@ -31,14 +31,19 @@ const (
 	imageDefaultQuality = 80 // สงวนไว้สำหรับอนาคต (ตอนนี้ provider ส่ง webp/png มาแล้ว)
 )
 
+// Allowlist based on evidenced image origins in repo/usages.
+// Narrowed for Task 3: remove broad cloudfront.net, restrict bbci to ichef.bbci.co.uk,
+// and restrict googleusercontent to common avatar hosts (lh3-6) instead of any subdomain.
 var imageAllowedSuffixes = []string{
 	"espncdn.com",
 	"goal-api.com",
 	"fotmob.com",
 	"sofascore.com",
-	"googleusercontent.com",
-	"cloudfront.net",
-	"bbci.co.uk", // BBC Sport news thumbnails (ichef.bbci.co.uk — media:thumbnail in /api/news RSS)
+	"ichef.bbci.co.uk",       // BBC Sport news thumbnails (evidenced)
+	"lh3.googleusercontent.com",
+	"lh4.googleusercontent.com",
+	"lh5.googleusercontent.com",
+	"lh6.googleusercontent.com",
 }
 
 type cachedImage struct {
@@ -50,8 +55,30 @@ type cachedImage struct {
 var (
 	imageMu   sync.Mutex
 	imageMem  = make(map[string]cachedImage)
-	imageHTTP = &http.Client{Timeout: imageFetchTimeout}
+	imageHTTP = newImageHTTPClient()
 )
+
+var imageAllowedURL = allowedImageURL
+
+func imageRedirectPolicy(req *http.Request, via []*http.Request) error {
+	if len(via) >= 5 {
+		return fmt.Errorf("too many redirects")
+	}
+	if req.URL == nil {
+		return fmt.Errorf("redirect target missing url")
+	}
+	if !imageAllowedURL(req.URL.String()) {
+		return fmt.Errorf("redirect target not allowed")
+	}
+	return nil
+}
+
+func newImageHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout:       imageFetchTimeout,
+		CheckRedirect: imageRedirectPolicy,
+	}
+}
 
 // imageCacheKey — sha256 ของ URL (ชื่อไฟล์สั้น คงที่ ไม่รั่ว URL ยาวใน Redis key)
 func imageCacheKey(rawURL string) string {
