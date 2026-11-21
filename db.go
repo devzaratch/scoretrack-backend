@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -168,7 +169,26 @@ func (db *PersistentDB) syncWorker(interval time.Duration) {
 // Chat Messages Persistence
 // --------------------------------------------------
 
+func sanitizeChatStoredMessage(msg map[string]interface{}) map[string]interface{} {
+	if msg == nil {
+		return nil
+	}
+	out := map[string]interface{}{}
+	if v, ok := msg["id"]; ok { out["id"] = v }
+	if v, ok := msg["user"].(string); ok { out["user"] = trimToRuneLen(v, 40) }
+	if v, ok := msg["text"].(string); ok { out["text"] = trimToRuneLen(v, 500) }
+	if v, ok := msg["type"].(string); ok { out["type"] = trimToRuneLen(v, 20) }
+	if v, ok := msg["time"]; ok { out["time"] = v }
+	if len(out) == 0 { return nil }
+	return out
+}
+
 func (db *PersistentDB) SaveChatMessage(matchID string, msg map[string]interface{}) {
+	matchID = sanitizeMatchID(matchID)
+	msg = sanitizeChatStoredMessage(msg)
+	if matchID == "" || msg == nil {
+		return
+	}
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
@@ -177,34 +197,24 @@ func (db *PersistentDB) SaveChatMessage(matchID string, msg map[string]interface
 	if len(history) > 100 {
 		history = history[len(history)-100:]
 	}
-	// Retention 30 วัน — ตัดข้อความเก่ากว่า 30 วัน
 	cutoff := time.Now().AddDate(0, 0, -30).Unix()
 	trimmed := []map[string]interface{}{}
-	for _, msg := range history {
-		if tVal, ok := msg["time"]; ok {
+	for _, m := range history {
+		if tVal, ok := m["time"]; ok {
 			switch v := tVal.(type) {
 			case float64:
-				if v < float64(cutoff) {
-					continue
-				}
+				if v < float64(cutoff) { continue }
 			case int:
-				if int64(v) < cutoff {
-					continue
-				}
+				if int64(v) < cutoff { continue }
 			case int64:
-				if v < cutoff {
-					continue
-				}
+				if v < cutoff { continue }
 			case string:
-				if ts, err := strconv.ParseInt(v, 10, 64); err == nil && ts < cutoff {
-					continue
-				}
+				if ts, err := strconv.ParseInt(v, 10, 64); err == nil && ts < cutoff { continue }
 			}
 		}
-		trimmed = append(trimmed, msg)
+		trimmed = append(trimmed, m)
 	}
-	history = trimmed
-	db.data.ChatMessages[matchID] = history
+	db.data.ChatMessages[matchID] = trimmed
 	db.dirty = true
 }
 
@@ -235,9 +245,11 @@ func (db *PersistentDB) GetChatHistory(matchID string, limit int) []map[string]i
 // --------------------------------------------------
 
 func (db *PersistentDB) SaveUserFavorites(userID string, favs []int) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" || len(userID) > 200 { return }
+	favs = sanitizeFavorites(favs, maxFavoritesPerUser)
 	db.mu.Lock()
 	defer db.mu.Unlock()
-
 	db.data.UserFavorites[userID] = favs
 	db.dirty = true
 }
@@ -528,20 +540,20 @@ func (db *PersistentDB) GetUserInterests(userID string) []string {
 
 // SetUserInterest — ติดตาม/เลิกติดตาม (คืนรายการล่าสุดของผู้ใช้)
 func (db *PersistentDB) SetUserInterest(userID string, key string, follow bool) []string {
+	userID = strings.TrimSpace(userID)
+	key = normalizeInterestKey(strings.SplitN(key, ":", 2)[0], strings.TrimPrefix(key, strings.SplitN(key, ":", 2)[0]+":"))
+	if key == "" { key = strings.ToLower(strings.TrimSpace(key)) }
+	if userID == "" || len(userID) > 200 || !validInterestID(strings.TrimPrefix(strings.TrimPrefix(key, "league:"), "team:")) || ( !strings.HasPrefix(key, "league:") && !strings.HasPrefix(key, "team:") ) {
+		return db.GetUserInterests(userID)
+	}
 	db.mu.Lock()
 	defer db.mu.Unlock()
-
-	if db.data.UserInterests == nil {
-		db.data.UserInterests = make(map[string][]string)
-	}
+	if db.data.UserInterests == nil { db.data.UserInterests = make(map[string][]string) }
 	current := db.data.UserInterests[userID]
-
 	set := make(map[string]bool, len(current))
-	for _, k := range current {
-		set[k] = true
-	}
+	for _, k := range current { set[k] = true }
 	if follow {
-		set[key] = true
+		if len(set) < maxInterestsPerUser || set[key] { set[key] = true }
 	} else {
 		delete(set, key)
 	}
@@ -633,24 +645,20 @@ func (db *PersistentDB) DeleteUserData(userID string) map[string]interface{} {
 // --------------------------------------------------
 
 func (db *PersistentDB) SubscribeMatch(matchID int, token string) int {
+	token = sanitizeFCMToken(token)
+	if token == "" || matchID <= 0 || matchID > 1_000_000_000 { return 0 }
 	db.mu.Lock()
 	defer db.mu.Unlock()
-
+	if db.data.MatchSubscriptions == nil { db.data.MatchSubscriptions = make(map[int][]string) }
 	tokens := db.data.MatchSubscriptions[matchID]
-	exists := false
-	for _, t := range tokens {
-		if t == token {
-			exists = true
-			break
-		}
-	}
-
-	if !exists && token != "" {
-		tokens = append(tokens, token)
-		db.data.MatchSubscriptions[matchID] = tokens
-		db.dirty = true
-	}
-
+	for _, tkn := range tokens { if tkn == token { return len(tokens) } }
+	if len(tokens) >= maxSubscriptionsPerMatch { return len(tokens) }
+	totalSubs := 0
+	for _, v := range db.data.MatchSubscriptions { totalSubs += len(v) }
+	if totalSubs >= maxMatchSubscriptions { return len(tokens) }
+	tokens = append(tokens, token)
+	db.data.MatchSubscriptions[matchID] = tokens
+	db.dirty = true
 	return len(tokens)
 }
 
@@ -704,19 +712,16 @@ func (db *PersistentDB) HasAnyMatchSubscriptions() bool {
 
 // SaveFCMToken เก็บ token ไว้พร้อม timestamp (กัน token ซ้ำอัตโนมัติ)
 func (db *PersistentDB) SaveFCMToken(token string) {
-	if token == "" {
-		return
-	}
+	token = sanitizeFCMToken(token)
+	if token == "" { return }
 	db.mu.Lock()
 	defer db.mu.Unlock()
-	if db.data.FCMTokens == nil {
-		db.data.FCMTokens = make(map[string]int64)
-	}
+	if db.data.FCMTokens == nil { db.data.FCMTokens = make(map[string]int64) }
 	db.data.FCMTokens[token] = time.Now().Unix()
 	db.dirty = true
 }
 
-// GetFCMTokens คืน token ทั้งหมดที่ลงทะเบียนไว้
+// GetFCMTokens// GetFCMTokens คืน token ทั้งหมดที่ลงทะเบียนไว้
 func (db *PersistentDB) GetFCMTokens() []string {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
@@ -757,19 +762,22 @@ func (db *PersistentDB) PruneFCMTokens(maxAge time.Duration) int {
 // User Predictions Persistence
 // --------------------------------------------------
 
-func (db *PersistentDB) SavePrediction(userID, matchID string, pred map[string]interface{}) {
+func (db *PersistentDB) SavePrediction(userID, matchID string, pred map[string]interface{}) error {
+	userID = strings.TrimSpace(userID)
+	matchID = sanitizeMatchID(matchID)
+	if userID == "" || len(userID) > 200 || matchID == "" {
+		return fmt.Errorf("invalid prediction key")
+	}
+	if err := validateJSONObjectSize(pred, maxPredictionJSONBytes, "prediction"); err != nil {
+		return err
+	}
 	db.mu.Lock()
 	defer db.mu.Unlock()
-
-	if db.data.Predictions == nil {
-		db.data.Predictions = make(map[string]map[string]interface{})
-	}
-
-	if db.data.Predictions[userID] == nil {
-		db.data.Predictions[userID] = make(map[string]interface{})
-	}
+	if db.data.Predictions == nil { db.data.Predictions = make(map[string]map[string]interface{}) }
+	if db.data.Predictions[userID] == nil { db.data.Predictions[userID] = make(map[string]interface{}) }
 	db.data.Predictions[userID][matchID] = pred
 	db.dirty = true
+	return nil
 }
 
 func (db *PersistentDB) GetPredictionsByUser(userID string) map[string]interface{} {
@@ -809,15 +817,20 @@ func (db *PersistentDB) GetAllPredictions() map[string]map[string]interface{} {
 // User Notification Preferences
 // --------------------------------------------------
 
-func (db *PersistentDB) SaveNotificationPrefs(userID string, prefs map[string]interface{}) {
+func (db *PersistentDB) SaveNotificationPrefs(userID string, prefs map[string]interface{}) error {
+	userID = strings.TrimSpace(userID)
+	if userID == "" || len(userID) > 200 {
+		return fmt.Errorf("invalid user")
+	}
+	if err := validateJSONObjectSize(prefs, maxNotificationPrefsBytes, "preferences"); err != nil {
+		return err
+	}
 	db.mu.Lock()
 	defer db.mu.Unlock()
-
-	if db.data.UserNotificationPrefs == nil {
-		db.data.UserNotificationPrefs = make(map[string]map[string]interface{})
-	}
+	if db.data.UserNotificationPrefs == nil { db.data.UserNotificationPrefs = make(map[string]map[string]interface{}) }
 	db.data.UserNotificationPrefs[userID] = prefs
 	db.dirty = true
+	return nil
 }
 
 func (db *PersistentDB) GetNotificationPrefs(userID string) map[string]interface{} {

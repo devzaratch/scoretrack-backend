@@ -161,15 +161,21 @@ func handleChatReport(c *gin.Context) {
 		text = text[:300]
 	}
 	rep := ChatReport{
-		MatchID:    strings.TrimSpace(body.MatchID),
-		User:       strings.TrimSpace(body.User),
-		Text:       text,
-		Reason:     reason,
+		MatchID:    sanitizeMatchID(body.MatchID),
+		User:       trimToRuneLen(body.User, maxChatReportUserLen),
+		Text:       trimToRuneLen(text, 300),
+		Reason:     trimToRuneLen(reason, 200),
 		ReporterIP: adminClientIP(c),
 		ReportedAt: time.Now().Unix(),
 	}
-	GlobalDB.AddChatReport(rep)
-	logInfof("🚨 chat report: room=%s user=%q reason=%q", rep.MatchID, rep.User, reason)
+	if rep.MatchID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid match_id"})
+		return
+	}
+	if !GlobalDB.AddChatReport(rep) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid report"})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"status": "reported"})
 }
 

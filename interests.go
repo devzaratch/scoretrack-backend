@@ -66,25 +66,17 @@ func handleUserInterestToggle(c *gin.Context) {
 		return
 	}
 	key := normalizeInterestKey(body.Kind, body.ID)
-	if key == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "kind ต้องเป็น team หรือ league"})
+	if key == "" || !validInterestID(body.ID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid interest key", "max_id_len": maxInterestIDLen})
 		return
 	}
 	if GlobalDB == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "ฐานข้อมูลไม่พร้อม"})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "db unavailable"})
 		return
 	}
-
 	userKey := resolveUserKey(c)
 	interests := GlobalDB.SetUserInterest(userKey, key, body.Follow)
-	logInfof("👀 ผู้ใช้ [%s] %s ทีม/ลีก: %s (ตอนนี้ %d รายการ)", userKey,
-		map[bool]string{true: "ติดตาม", false: "เลิกติดตาม"}[body.Follow], key, len(interests))
-
-	c.JSON(http.StatusOK, gin.H{
-		"status":    "ok",
-		"following": body.Follow,
-		"interests": interests,
-	})
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "following": body.Follow, "interests": interests})
 }
 
 // sortedInterests — เรียง key ให้คงที่ (กันลำดับสุ่มตอนอ่านจาก map)

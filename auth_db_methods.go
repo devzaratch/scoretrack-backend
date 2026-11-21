@@ -265,10 +265,18 @@ type ChatReport struct {
 
 // AddChatReport เพิ่มรายงาน (คืน true ถ้าสำเร็จ)
 func (db *PersistentDB) AddChatReport(rep ChatReport) bool {
+	rep.MatchID = sanitizeMatchID(rep.MatchID)
+	rep.User = trimToRuneLen(rep.User, maxChatReportUserLen)
+	rep.Text = trimToRuneLen(rep.Text, 300)
+	rep.Reason = trimToRuneLen(rep.Reason, 200)
+	rep.ReporterIP = trimToRuneLen(rep.ReporterIP, 128)
+	if rep.Reason == "" || rep.MatchID == "" {
+		return false
+	}
+	if rep.ReportedAt == 0 { rep.ReportedAt = time.Now().Unix() }
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	db.data.ChatReports = append(db.data.ChatReports, rep)
-	// จำกัดจำนวนสะสม (กันไฟล์บวม) — เก็บไม่เกิน 1,000 รายล่าสุด
 	if len(db.data.ChatReports) > 1000 {
 		db.data.ChatReports = db.data.ChatReports[len(db.data.ChatReports)-1000:]
 	}
@@ -276,7 +284,7 @@ func (db *PersistentDB) AddChatReport(rep ChatReport) bool {
 	return true
 }
 
-// ListChatReports รายการรายงาน (ใหม่สุดก่อน)
+// ListChatReports// ListChatReports// ListChatReports รายการรายงาน (ใหม่สุดก่อน)
 func (db *PersistentDB) ListChatReports() []ChatReport {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
