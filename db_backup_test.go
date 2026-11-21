@@ -24,7 +24,7 @@ func TestUserRecordCount(t *testing.T) {
 		t.Fatalf("chat-only -> %d, want 0 (แชทไม่นับ)", got)
 	}
 	filled := &StoreData{
-		UserSessions:       map[string]string{"tok1": "google-sub-1"},
+		UserSessions:       UserSessionStore{"tok1": {Sub: "google-sub-1"}},
 		UserFavorites:      map[string][]int{"google-sub-1": {1, 2}},
 		Predictions:        map[string]map[string]interface{}{"google-sub-1": {"100": nil}},
 		Achievements:       map[string][]string{"google-sub-1": {"first_login"}},
@@ -38,7 +38,7 @@ func TestUserRecordCount(t *testing.T) {
 
 func TestShouldRestoreFromSnapshot(t *testing.T) {
 	dataSnap := &StoreData{
-		UserSessions:  map[string]string{"tok": "sub"},
+		UserSessions:  UserSessionStore{"tok": {Sub: "sub"}},
 		UserFavorites: map[string][]int{"sub": {5}},
 	}
 	empty := &StoreData{}
@@ -75,7 +75,7 @@ func TestSnapshotRoundTrip(t *testing.T) {
 			"123": {{"id": float64(1), "user": "A", "text": "สวัสดี", "type": "text"}},
 		},
 		UserFavorites:      map[string][]int{"sub-a": {10, 20}},
-		UserSessions:       map[string]string{"tok-a": "sub-a"},
+		UserSessions:       UserSessionStore{"tok-a": {Sub: "sub-a"}},
 		MatchSubscriptions: map[int][]string{55: {"sub-a"}},
 		FCMTokens:          map[string]int64{"fcm-a": 1760000000},
 		Predictions: map[string]map[string]interface{}{

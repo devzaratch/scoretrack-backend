@@ -36,7 +36,7 @@ func newTestDB(t *testing.T) *PersistentDB {
 		data: StoreData{
 			ChatMessages:          make(map[string][]map[string]interface{}),
 			UserFavorites:         make(map[string][]int),
-			UserSessions:          make(map[string]string),
+			UserSessions:          make(UserSessionStore),
 			MatchSubscriptions:    make(map[int][]string),
 			FCMTokens:             make(map[string]int64),
 			Predictions:           make(map[string]map[string]interface{}),
@@ -52,7 +52,7 @@ func TestRestoreFromSnapshot_RealRedis(t *testing.T) {
 	mr, _ := withTestRedis(t)
 
 	snap := StoreData{
-		UserSessions:  map[string]string{"tok-real": "sub-real"},
+		UserSessions:  UserSessionStore{"tok-real": {Sub: "sub-real"}},
 		UserFavorites: map[string][]int{"sub-real": {10, 20}},
 		Predictions: map[string]map[string]interface{}{
 			"sub-real": {"100": map[string]interface{}{"score": "2-1"}},
@@ -69,7 +69,7 @@ func TestRestoreFromSnapshot_RealRedis(t *testing.T) {
 	if !db.restoreFromSnapshot() {
 		t.Fatal("ควร restore สำเร็จเมื่อ local ว่าง + snapshot มีข้อมูล")
 	}
-	if got := db.data.UserSessions["tok-real"]; got != "sub-real" {
+	if got := db.data.UserSessions["tok-real"].Sub; got != "sub-real" {
 		t.Errorf("UserSessions ไม่ถูกกู้: %q", got)
 	}
 	if favs := db.data.UserFavorites["sub-real"]; len(favs) != 2 || favs[0] != 10 {
@@ -83,12 +83,12 @@ func TestRestoreFromSnapshot_RealRedis(t *testing.T) {
 // TestRestoreFromSnapshot_SkipsWhenLocalHasData — ดิสก์ยังมีข้อมูล -> ห้ามทับ
 func TestRestoreFromSnapshot_SkipsWhenLocalHasData(t *testing.T) {
 	mr, _ := withTestRedis(t)
-	snap := StoreData{UserSessions: map[string]string{"tok-old": "sub-old"}}
+	snap := StoreData{UserSessions: UserSessionStore{"tok-old": {Sub: "sub-old"}}}
 	raw, _ := json.Marshal(snap)
 	mr.Set(dbSnapshotKey, string(raw))
 
 	db := newTestDB(t)
-	db.data.UserSessions["tok-local"] = "sub-local" // local มีข้อมูลอยู่แล้ว
+	db.data.UserSessions["tok-local"] = UserSession{Sub: "sub-local"} // local มีข้อมูลอยู่แล้ว
 
 	if db.restoreFromSnapshot() {
 		t.Fatal("local มีข้อมูลแล้ว ห้าม restore ทับ")

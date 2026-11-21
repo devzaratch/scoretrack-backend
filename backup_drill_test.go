@@ -7,7 +7,7 @@ import (
 
 func TestVerifySnapshotValid(t *testing.T) {
 	snap := StoreData{
-		UserSessions:       map[string]string{"s1": "u1", "s2": "u2"},
+		UserSessions:       UserSessionStore{"s1": {Sub: "u1"}, "s2": {Sub: "u2"}},
 		UserFavorites:      map[string][]int{"u1": {1}},
 		Predictions:        map[string]map[string]interface{}{"u1": {"m1": "2-1"}},
 		FCMTokens:          map[string]int64{"tok": 123},

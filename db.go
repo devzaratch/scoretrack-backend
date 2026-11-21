@@ -15,7 +15,7 @@ import (
 type StoreData struct {
 	ChatMessages          map[string][]map[string]interface{} `json:"chat_messages"`
 	UserFavorites         map[string][]int                    `json:"user_favorites"`
-	UserSessions          map[string]string                   `json:"user_sessions"` // session token -> google sub
+	UserSessions          UserSessionStore                    `json:"user_sessions"` // session token -> server-side session record
 	MatchSubscriptions    map[int][]string                    `json:"match_subscriptions"`
 	FCMTokens             map[string]int64                    `json:"fcm_tokens"`         // token -> unix timestamp ที่ลงทะเบียนล่าสุด
 	Predictions           map[string]map[string]interface{}   `json:"predictions"`        // userID -> matchID -> prediction data
@@ -60,7 +60,7 @@ func InitDB() *PersistentDB {
 		data: StoreData{
 			ChatMessages:          make(map[string][]map[string]interface{}),
 			UserFavorites:         make(map[string][]int),
-			UserSessions:          make(map[string]string),
+			UserSessions:          make(UserSessionStore),
 			MatchSubscriptions:    make(map[int][]string),
 			FCMTokens:             make(map[string]int64),
 			Predictions:           make(map[string]map[string]interface{}),
@@ -250,19 +250,64 @@ func (db *PersistentDB) GetUserFavorites(userID string) []int {
 // User Sessions (Google sub <-> session token)
 // --------------------------------------------------
 
+func userSessionMaxAge() time.Duration {
+	days := envInt("SESSION_MAX_AGE_DAYS", 30)
+	if days <= 0 {
+		days = 30
+	}
+	return time.Duration(days) * 24 * time.Hour
+}
+
 func (db *PersistentDB) SaveUserSession(token, sub string) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
-	db.data.UserSessions[token] = sub
+	if db.data.UserSessions == nil {
+		db.data.UserSessions = make(UserSessionStore)
+	}
+	now := time.Now().Unix()
+	db.data.UserSessions[token] = UserSession{
+		Sub:        sub,
+		CreatedAt:  now,
+		LastSeenAt: now,
+		ExpiresAt:  time.Now().Add(userSessionMaxAge()).Unix(),
+	}
 	db.dirty = true
 }
 
 func (db *PersistentDB) GetSessionSub(token string) string {
-	db.mu.RLock()
-	defer db.mu.RUnlock()
+	now := time.Now().Unix()
 
-	return db.data.UserSessions[token]
+	db.mu.RLock()
+	rec, ok := db.data.UserSessions[token]
+	db.mu.RUnlock()
+	if !ok || rec.Sub == "" {
+		return ""
+	}
+	if rec.ExpiresAt > 0 && now >= rec.ExpiresAt {
+		db.mu.Lock()
+		if cur, ok := db.data.UserSessions[token]; ok {
+			if cur.ExpiresAt > 0 && time.Now().Unix() >= cur.ExpiresAt {
+				delete(db.data.UserSessions, token)
+				db.dirty = true
+			}
+		}
+		db.mu.Unlock()
+		return ""
+	}
+
+	if rec.LastSeenAt == 0 || now-rec.LastSeenAt >= 300 {
+		db.mu.Lock()
+		if cur, ok := db.data.UserSessions[token]; ok && cur.Sub != "" && (cur.ExpiresAt == 0 || now < cur.ExpiresAt) {
+			if cur.LastSeenAt == 0 || now-cur.LastSeenAt >= 300 {
+				cur.LastSeenAt = now
+				db.data.UserSessions[token] = cur
+				db.dirty = true
+			}
+		}
+		db.mu.Unlock()
+	}
+	return rec.Sub
 }
 
 // DeleteUserSession — ลบ session (logout) เพื่อให้ token เดิมใช้ไม่ได้อีก
@@ -274,6 +319,38 @@ func (db *PersistentDB) DeleteUserSession(token string) {
 		delete(db.data.UserSessions, token)
 		db.dirty = true
 	}
+}
+
+// PruneExpiredUserSessions removes expired server-side sessions and reports count.
+func (db *PersistentDB) PruneExpiredUserSessions() int {
+	now := time.Now().Unix()
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	if db.data.UserSessions == nil {
+		return 0
+	}
+	removed := 0
+	for token, rec := range db.data.UserSessions {
+		if rec.ExpiresAt > 0 && now >= rec.ExpiresAt {
+			delete(db.data.UserSessions, token)
+			removed++
+		}
+	}
+	if removed > 0 {
+		db.dirty = true
+	}
+	return removed
+}
+
+// sessionSub returns the subject only for non-expired records.
+func sessionSub(rec UserSession, now int64) string {
+	if rec.Sub == "" {
+		return ""
+	}
+	if rec.ExpiresAt > 0 && now >= rec.ExpiresAt {
+		return ""
+	}
+	return rec.Sub
 }
 
 // SaveAPIKey — บันทึก/อัปเดต API key (แผนข้อ 7)
@@ -475,19 +552,19 @@ func (db *PersistentDB) GetUserAchievements(userID string) []string {
 	return db.data.Achievements[userID]
 }
 
-// GetSessionSubByUser — หา google sub ของ user key (user:g:<sub>) จาก session ที่ยังมี
+// GetSessionSubByUser — หา google sub ของ user key (user:g:<sub>) จาก session ที่ยังมีและไม่หมดอายุ
 func (db *PersistentDB) GetSessionSubByUser(userKey string) string {
 	if len(userKey) < len("user:g:") || userKey[:len("user:g:")] != "user:g:" {
 		return ""
 	}
 	sub := userKey[len("user:g:"):]
+	now := time.Now().Unix()
 	db.mu.RLock()
 	defer db.mu.RUnlock()
-	for token, s := range db.data.UserSessions {
-		if s == sub {
+	for _, rec := range db.data.UserSessions {
+		if sessionSub(rec, now) == sub {
 			return sub
 		}
-		_ = token
 	}
 	return ""
 }
@@ -498,8 +575,8 @@ func (db *PersistentDB) DeleteUserSessionsBySub(sub string) int {
 	defer db.mu.Unlock()
 
 	n := 0
-	for token, s := range db.data.UserSessions {
-		if s == sub {
+	for token, rec := range db.data.UserSessions {
+		if rec.Sub == sub {
 			delete(db.data.UserSessions, token)
 			n++
 		}
@@ -765,8 +842,11 @@ func (db *PersistentDB) CountUsers() int {
 	for k := range db.data.UserFavorites {
 		seen[k] = true
 	}
-	for _, sub := range db.data.UserSessions {
-		seen["user:g:"+sub] = true
+	now := time.Now().Unix()
+	for _, rec := range db.data.UserSessions {
+		if sub := sessionSub(rec, now); sub != "" {
+			seen["user:g:"+sub] = true
+		}
 	}
 	for k := range db.data.Predictions {
 		seen[k] = true
@@ -777,7 +857,14 @@ func (db *PersistentDB) CountUsers() int {
 func (db *PersistentDB) CountSessions() int {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
-	return len(db.data.UserSessions)
+	now := time.Now().Unix()
+	n := 0
+	for _, rec := range db.data.UserSessions {
+		if sessionSub(rec, now) != "" {
+			n++
+		}
+	}
+	return n
 }
 
 func (db *PersistentDB) CountFCMTokens() int {
@@ -850,9 +937,12 @@ func (db *PersistentDB) GetAllUsers() []map[string]interface{} {
 		u := getUser(k)
 		u.achievements = len(ach)
 	}
-	for _, sub := range db.data.UserSessions {
-		u := getUser("user:g:" + sub)
-		u.hasFCM = true
+	now := time.Now().Unix()
+	for _, rec := range db.data.UserSessions {
+		if sub := sessionSub(rec, now); sub != "" {
+			u := getUser("user:g:" + sub)
+			u.hasFCM = true
+		}
 	}
 
 	result := make([]map[string]interface{}, 0, len(users))

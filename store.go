@@ -1,18 +1,18 @@
-package main
+﻿package main
 
-// storage — ชั้นเก็บข้อมูลถาวร (แผนข้อ 1: ย้ายจากไฟล์ JSON ไป PostgreSQL)
+// storage â€” à¸Šà¸±à¹‰à¸™à¹€à¸à¹‡à¸šà¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¸–à¸²à¸§à¸£ (à¹à¸œà¸™à¸‚à¹‰à¸­ 1: à¸¢à¹‰à¸²à¸¢à¸ˆà¸²à¸à¹„à¸Ÿà¸¥à¹Œ JSON à¹„à¸› PostgreSQL)
 //
-// เดิม: ทุกอย่างอยู่ใน data/store.json ไฟล์เดียว (ฝั่ง instance เดียว)
-//   - Render ฟรี tier = ดิสก์ ephemeral -> restart แล้วข้อมูลหาย (ต้องพึ่ง Redis snapshot)
-//   - scale เป็น 2 instance = ข้อมูลแยกกัน (ผู้ใช้คนละเครื่องเห็นคนละอย่าง)
-//   - backup = copy ไฟล์, query ซับซ้อนไม่ได้
+// à¹€à¸”à¸´à¸¡: à¸—à¸¸à¸à¸­à¸¢à¹ˆà¸²à¸‡à¸­à¸¢à¸¹à¹ˆà¹ƒà¸™ data/store.json à¹„à¸Ÿà¸¥à¹Œà¹€à¸”à¸µà¸¢à¸§ (à¸à¸±à¹ˆà¸‡ instance à¹€à¸”à¸µà¸¢à¸§)
+//   - Render à¸Ÿà¸£à¸µ tier = à¸”à¸´à¸ªà¸à¹Œ ephemeral -> restart à¹à¸¥à¹‰à¸§à¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¸«à¸²à¸¢ (à¸•à¹‰à¸­à¸‡à¸žà¸¶à¹ˆà¸‡ Redis snapshot)
+//   - scale à¹€à¸›à¹‡à¸™ 2 instance = à¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¹à¸¢à¸à¸à¸±à¸™ (à¸œà¸¹à¹‰à¹ƒà¸Šà¹‰à¸„à¸™à¸¥à¸°à¹€à¸„à¸£à¸·à¹ˆà¸­à¸‡à¹€à¸«à¹‡à¸™à¸„à¸™à¸¥à¸°à¸­à¸¢à¹ˆà¸²à¸‡)
+//   - backup = copy à¹„à¸Ÿà¸¥à¹Œ, query à¸‹à¸±à¸šà¸‹à¹‰à¸­à¸™à¹„à¸¡à¹ˆà¹„à¸”à¹‰
 //
-// ตอนนี้: Storage interface + 2 implementation
-//   - fileStorage   : ของเดิม (default) — ใช้ตอน dev/ไม่มี DB
-//   - postgresStorage: เก็บเป็น JSONB document ใน Postgres (DATA_BACKEND=postgres)
-//     ต่อยอดเป็นตารางจริงได้ทีละตารางโดยไม่ต้องแตะ business logic
+// à¸•à¸­à¸™à¸™à¸µà¹‰: Storage interface + 2 implementation
+//   - fileStorage   : à¸‚à¸­à¸‡à¹€à¸”à¸´à¸¡ (default) â€” à¹ƒà¸Šà¹‰à¸•à¸­à¸™ dev/à¹„à¸¡à¹ˆà¸¡à¸µ DB
+//   - postgresStorage: à¹€à¸à¹‡à¸šà¹€à¸›à¹‡à¸™ JSONB document à¹ƒà¸™ Postgres (DATA_BACKEND=postgres)
+//     à¸•à¹ˆà¸­à¸¢à¸­à¸”à¹€à¸›à¹‡à¸™à¸•à¸²à¸£à¸²à¸‡à¸ˆà¸£à¸´à¸‡à¹„à¸”à¹‰à¸—à¸µà¸¥à¸°à¸•à¸²à¸£à¸²à¸‡à¹‚à¸”à¸¢à¹„à¸¡à¹ˆà¸•à¹‰à¸­à¸‡à¹à¸•à¸° business logic
 //
-// เลือกด้วย env: DATA_BACKEND=postgres + DATABASE_URL=postgres://user:pass@host:5432/db
+// à¹€à¸¥à¸·à¸­à¸à¸”à¹‰à¸§à¸¢ env: DATA_BACKEND=postgres + DATABASE_URL=postgres://user:pass@host:5432/db
 
 import (
 	"context"
@@ -24,25 +24,25 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/lib/pq" // driver ของ PostgreSQL
+	_ "github.com/lib/pq" // driver à¸‚à¸­à¸‡ PostgreSQL
 )
 
-// Storage — ชั้นเก็บข้อมูลถาวร (ถอดออกได้ผ่าน interface นี้)
+// Storage â€” à¸Šà¸±à¹‰à¸™à¹€à¸à¹‡à¸šà¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¸–à¸²à¸§à¸£ (à¸–à¸­à¸”à¸­à¸­à¸à¹„à¸”à¹‰à¸œà¹ˆà¸²à¸™ interface à¸™à¸µà¹‰)
 type Storage interface {
-	// Load — อ่านข้อมูลทั้งชุด (ถ้ายังไม่มี = คืน StoreData ว่าง ไม่ error)
+	// Load â€” à¸­à¹ˆà¸²à¸™à¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¸—à¸±à¹‰à¸‡à¸Šà¸¸à¸” (à¸–à¹‰à¸²à¸¢à¸±à¸‡à¹„à¸¡à¹ˆà¸¡à¸µ = à¸„à¸·à¸™ StoreData à¸§à¹ˆà¸²à¸‡ à¹„à¸¡à¹ˆ error)
 	Load() (StoreData, error)
-	// Save — เขียนข้อมูลทั้งชุด (atomic)
+	// Save â€” à¹€à¸‚à¸µà¸¢à¸™à¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¸—à¸±à¹‰à¸‡à¸Šà¸¸à¸” (atomic)
 	Save(data StoreData) error
-	// Name — ชื่อสำหรับ log
+	// Name â€” à¸Šà¸·à¹ˆà¸­à¸ªà¸³à¸«à¸£à¸±à¸š log
 	Name() string
 }
 
-// newEmptyStoreData — โครงสร้างว่างที่ map ครบ (กัน nil map ตอนเขียน)
+// newEmptyStoreData â€” à¹‚à¸„à¸£à¸‡à¸ªà¸£à¹‰à¸²à¸‡à¸§à¹ˆà¸²à¸‡à¸—à¸µà¹ˆ map à¸„à¸£à¸š (à¸à¸±à¸™ nil map à¸•à¸­à¸™à¹€à¸‚à¸µà¸¢à¸™)
 func newEmptyStoreData() StoreData {
 	return StoreData{
 		ChatMessages:          make(map[string][]map[string]interface{}),
 		UserFavorites:         make(map[string][]int),
-		UserSessions:          make(map[string]string),
+		UserSessions:          make(UserSessionStore),
 		MatchSubscriptions:    make(map[int][]string),
 		FCMTokens:             make(map[string]int64),
 		Predictions:           make(map[string]map[string]interface{}),
@@ -53,7 +53,7 @@ func newEmptyStoreData() StoreData {
 	}
 }
 
-// mergeLoaded — รวมข้อมูลที่อ่านมากับโครงสร้างว่าง (คง field ที่ไม่มีในไฟล์เก่า)
+// mergeLoaded â€” à¸£à¸§à¸¡à¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¸—à¸µà¹ˆà¸­à¹ˆà¸²à¸™à¸¡à¸²à¸à¸±à¸šà¹‚à¸„à¸£à¸‡à¸ªà¸£à¹‰à¸²à¸‡à¸§à¹ˆà¸²à¸‡ (à¸„à¸‡ field à¸—à¸µà¹ˆà¹„à¸¡à¹ˆà¸¡à¸µà¹ƒà¸™à¹„à¸Ÿà¸¥à¹Œà¹€à¸à¹ˆà¸²)
 func mergeLoaded(loaded StoreData) StoreData {
 	base := newEmptyStoreData()
 	if loaded.ChatMessages != nil {
@@ -89,7 +89,7 @@ func mergeLoaded(loaded StoreData) StoreData {
 	return base
 }
 
-// isEmptyStore — ข้อมูลว่างจริงไหม (ใช้ตัดสินว่าต้อง import ข้อมูลเดิมเข้า DB ไหม)
+// isEmptyStore â€” à¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¸§à¹ˆà¸²à¸‡à¸ˆà¸£à¸´à¸‡à¹„à¸«à¸¡ (à¹ƒà¸Šà¹‰à¸•à¸±à¸”à¸ªà¸´à¸™à¸§à¹ˆà¸²à¸•à¹‰à¸­à¸‡ import à¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¹€à¸”à¸´à¸¡à¹€à¸‚à¹‰à¸² DB à¹„à¸«à¸¡)
 func isEmptyStore(data StoreData) bool {
 	return len(data.UserSessions) == 0 &&
 		len(data.UserFavorites) == 0 &&
@@ -101,7 +101,7 @@ func isEmptyStore(data StoreData) bool {
 }
 
 // ---------------------------------------------------------------------------
-// fileStorage — ของเดิม (data/store.json, เขียนแบบ atomic)
+// fileStorage â€” à¸‚à¸­à¸‡à¹€à¸”à¸´à¸¡ (data/store.json, à¹€à¸‚à¸µà¸¢à¸™à¹à¸šà¸š atomic)
 // ---------------------------------------------------------------------------
 
 type fileStorage struct {
@@ -148,7 +148,7 @@ func (s *fileStorage) Save(data StoreData) error {
 }
 
 // ---------------------------------------------------------------------------
-// postgresStorage — เก็บเป็น JSONB document (แผนข้อ 1 เฟส 1)
+// postgresStorage â€” à¹€à¸à¹‡à¸šà¹€à¸›à¹‡à¸™ JSONB document (à¹à¸œà¸™à¸‚à¹‰à¸­ 1 à¹€à¸Ÿà¸ª 1)
 // ---------------------------------------------------------------------------
 
 type postgresStorage struct {
@@ -161,7 +161,7 @@ func newPostgresStorage(dsn string) (*postgresStorage, error) {
 	if err != nil {
 		return nil, err
 	}
-	// pool เล็กนิด: เราเก็บทั้งชุดใน document เดียว
+	// pool à¹€à¸¥à¹‡à¸à¸™à¸´à¸”: à¹€à¸£à¸²à¹€à¸à¹‡à¸šà¸—à¸±à¹‰à¸‡à¸Šà¸¸à¸”à¹ƒà¸™ document à¹€à¸”à¸µà¸¢à¸§
 	conn.SetMaxOpenConns(4)
 	conn.SetMaxIdleConns(2)
 	conn.SetConnMaxLifetime(30 * time.Minute)
@@ -177,7 +177,7 @@ func newPostgresStorage(dsn string) (*postgresStorage, error) {
 
 func (s *postgresStorage) Name() string { return "postgres(" + s.table + ")" }
 
-// ensureTable — สร้างตารางถ้ายังไม่มี (idempotent)
+// ensureTable â€” à¸ªà¸£à¹‰à¸²à¸‡à¸•à¸²à¸£à¸²à¸‡à¸–à¹‰à¸²à¸¢à¸±à¸‡à¹„à¸¡à¹ˆà¸¡à¸µ (idempotent)
 func (s *postgresStorage) ensureTable() error {
 	stmt := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
 		id          INTEGER PRIMARY KEY,
@@ -215,7 +215,7 @@ func (s *postgresStorage) Save(data StoreData) error {
 	if err != nil {
 		return err
 	}
-	// upsert แถวเดียว (id=1) — ข้อมูลทั้งชุดอยู่ใน document เดียว
+	// upsert à¹à¸–à¸§à¹€à¸”à¸µà¸¢à¸§ (id=1) â€” à¸‚à¹‰à¸­à¸¡à¸¹à¸¥à¸—à¸±à¹‰à¸‡à¸Šà¸¸à¸”à¸­à¸¢à¸¹à¹ˆà¹ƒà¸™ document à¹€à¸”à¸µà¸¢à¸§
 	stmt := fmt.Sprintf(`INSERT INTO %s (id, doc, updated_at)
 		VALUES (1, $1, now())
 		ON CONFLICT (id) DO UPDATE SET doc = EXCLUDED.doc, updated_at = now()`, s.table)
@@ -223,7 +223,7 @@ func (s *postgresStorage) Save(data StoreData) error {
 	return err
 }
 
-// Close — ปิด connection
+// Close â€” à¸›à¸´à¸” connection
 func (s *postgresStorage) Close() error {
 	if s.conn == nil {
 		return nil
@@ -231,28 +231,29 @@ func (s *postgresStorage) Close() error {
 	return s.conn.Close()
 }
 
-// newStorage — เลือก storage จาก env
+// newStorage â€” à¹€à¸¥à¸·à¸­à¸ storage à¸ˆà¸²à¸ env
 //
 //	DATA_BACKEND=postgres + DATABASE_URL -> postgres
-//	อย่างอื่น -> ไฟล์ (default, เหมือนเดิม)
+//	à¸­à¸¢à¹ˆà¸²à¸‡à¸­à¸·à¹ˆà¸™ -> à¹„à¸Ÿà¸¥à¹Œ (default, à¹€à¸«à¸¡à¸·à¸­à¸™à¹€à¸”à¸´à¸¡)
 func newStorage() (Storage, error) {
 	backend := strings.ToLower(strings.TrimSpace(os.Getenv("DATA_BACKEND")))
 	dsn := strings.TrimSpace(os.Getenv("DATABASE_URL"))
 
 	if backend == "postgres" || (backend == "" && dsn != "" && os.Getenv("DATA_BACKEND") == "postgres") {
 		if dsn == "" {
-			return nil, fmt.Errorf("DATA_BACKEND=postgres แต่ไม่ได้ตั้ง DATABASE_URL")
+			return nil, fmt.Errorf("DATA_BACKEND=postgres à¹à¸•à¹ˆà¹„à¸¡à¹ˆà¹„à¸”à¹‰à¸•à¸±à¹‰à¸‡ DATABASE_URL")
 		}
 		store, err := newPostgresStorage(dsn)
 		if err != nil {
 			return nil, err
 		}
-		logInfof("🗄️ ใช้ PostgreSQL เป็นที่เก็บข้อมูล (%s)", store.Name())
+		logInfof("ðŸ—„ï¸ à¹ƒà¸Šà¹‰ PostgreSQL à¹€à¸›à¹‡à¸™à¸—à¸µà¹ˆà¹€à¸à¹‡à¸šà¸‚à¹‰à¸­à¸¡à¸¹à¸¥ (%s)", store.Name())
 		return store, nil
 	}
 
 	path := filepath.Join("data", "store.json")
 	store := newFileStorage(path)
-	logInfof("📁 ใช้ไฟล์เป็นที่เก็บข้อมูล (%s) — ตั้ง DATA_BACKEND=postgres เพื่อใช้ DB", store.Name())
+	logInfof("ðŸ“ à¹ƒà¸Šà¹‰à¹„à¸Ÿà¸¥à¹Œà¹€à¸›à¹‡à¸™à¸—à¸µà¹ˆà¹€à¸à¹‡à¸šà¸‚à¹‰à¸­à¸¡à¸¹à¸¥ (%s) â€” à¸•à¸±à¹‰à¸‡ DATA_BACKEND=postgres à¹€à¸žà¸·à¹ˆà¸­à¹ƒà¸Šà¹‰ DB", store.Name())
 	return store, nil
 }
+

@@ -1,5 +1,7 @@
 package main
 
+import "time"
+
 // --- PersistentDB methods for Auth V2 ---
 // (structs UserProfile / VerificationCode / PasswordReset อยู่ใน auth_v2.go)
 
@@ -170,13 +172,14 @@ func (db *PersistentDB) EnsureAuthDefaults() {
 
 // --- Phase A ข้อ 3: จัดการอุปกรณ์/เซสชัน ---
 
-// CountSessionsBySub นับจำนวน session token ที่ผูกกับ sub นี้ (มีเครื่องกี่เครื่อง)
+// CountSessionsBySub นับจำนวน session token ที่ผูกกับ sub นี้ (มีเครื่องกี่เครื่อง, เฉพาะที่ยังไม่หมดอายุ)
 func (db *PersistentDB) CountSessionsBySub(sub string) int {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
+	now := time.Now().Unix()
 	n := 0
-	for _, s := range db.data.UserSessions {
-		if s == sub {
+	for _, rec := range db.data.UserSessions {
+		if sessionSub(rec, now) == sub {
 			n++
 		}
 	}

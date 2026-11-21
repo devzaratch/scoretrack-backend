@@ -25,7 +25,7 @@ func TestFileStorage_RoundTrip(t *testing.T) {
 	}
 
 	// เขียน -> อ่านกลับได้ของเดิม
-	data.UserSessions["tok"] = "sub-1"
+	data.UserSessions["tok"] = UserSession{Sub: "sub-1"}
 	data.UserFavorites["user:g:sub-1"] = []int{1, 2, 3}
 	if err := store.Save(data); err != nil {
 		t.Fatalf("บันทึกไม่สำเร็จ: %v", err)
@@ -34,7 +34,7 @@ func TestFileStorage_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("อ่านกลับไม่สำเร็จ: %v", err)
 	}
-	if back.UserSessions["tok"] != "sub-1" {
+	if back.UserSessions["tok"].Sub != "sub-1" {
 		t.Errorf("session หายหลัง round-trip: %v", back.UserSessions)
 	}
 	if len(back.UserFavorites["user:g:sub-1"]) != 3 {
@@ -49,12 +49,12 @@ func TestFileStorage_RoundTrip(t *testing.T) {
 
 func TestMergeLoaded_KeepsAllFields(t *testing.T) {
 	loaded := StoreData{
-		UserSessions:  map[string]string{"tok": "sub"},
+		UserSessions:  UserSessionStore{"tok": {Sub: "sub"}},
 		APIKeys:       map[string]APIKeyRecord{"sk": {Name: "x"}},
 		UserInterests: map[string][]string{"user:g:sub": {"league:47"}},
 	}
 	merged := mergeLoaded(loaded)
-	if merged.UserSessions["tok"] != "sub" {
+	if merged.UserSessions["tok"].Sub != "sub" {
 		t.Error("UserSessions หาย")
 	}
 	if merged.APIKeys["sk"].Name != "x" {
@@ -74,7 +74,7 @@ func TestIsEmptyStore(t *testing.T) {
 		t.Error("ข้อมูลว่างต้องเป็น empty")
 	}
 	withData := newEmptyStoreData()
-	withData.UserSessions["tok"] = "sub"
+	withData.UserSessions["tok"] = UserSession{Sub: "sub"}
 	if isEmptyStore(withData) {
 		t.Error("มี session แล้วต้องไม่ว่าง")
 	}
@@ -96,7 +96,7 @@ func TestPostgresStorage_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("โหลดไม่สำเร็จ: %v", err)
 	}
-	data.UserSessions["e2e-token"] = "e2e-sub"
+	data.UserSessions["e2e-token"] = UserSession{Sub: "e2e-sub"}
 	if err := store.Save(data); err != nil {
 		t.Fatalf("บันทึกไม่สำเร็จ: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestPostgresStorage_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("อ่านกลับไม่สำเร็จ: %v", err)
 	}
-	if back.UserSessions["e2e-token"] != "e2e-sub" {
+	if back.UserSessions["e2e-token"].Sub != "e2e-sub" {
 		t.Errorf("session หายหลัง round-trip: %v", back.UserSessions)
 	}
 }
