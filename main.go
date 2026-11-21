@@ -268,6 +268,12 @@ func main() {
 	r := gin.New()
 	// requestIDMiddleware ต้องมาก่อนสุด — recovery/log/rate-limit ทุกตัวใช้ ID เดียวกัน
 	r.Use(requestIDMiddleware(), recoveryMiddleware(), requestLogMiddleware())
+	r.NoRoute(func(c *gin.Context) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not found", "code": "NOT_FOUND", "request_id": requestIDFrom(c)})
+	})
+	r.NoMethod(func(c *gin.Context) {
+		c.JSON(http.StatusMethodNotAllowed, gin.H{"error": "method not allowed", "code": "METHOD_NOT_ALLOWED", "request_id": requestIDFrom(c)})
+	})
 
 	// หน้าแรก Root / สำหรับตรวจสอบสถานะ Server
 	r.GET("/", func(c *gin.Context) {
@@ -1233,7 +1239,9 @@ func rateLimiterMiddleware() gin.HandlerFunc {
 			rateLimitedTotal.Add(1)
 			logWarn("rate limited", "ip", ip, "scope", "global", "route", c.FullPath(), "request_id", requestIDFrom(c))
 			c.JSON(http.StatusTooManyRequests, gin.H{
-				"error": "คำขอมากเกินไป กรุณารอ 1 นาทีก่อนลองใหม่",
+				"error":      "rate limit exceeded, try again later",
+				"code":       "RATE_LIMITED",
+				"request_id": requestIDFrom(c),
 			})
 			c.Abort()
 			return
@@ -1252,7 +1260,11 @@ func rateLimitMiddleware(route string, limit int, window time.Duration) gin.Hand
 			logWarn("rate limited", "ip", c.ClientIP(), "scope", route, "route", c.FullPath(), "request_id", requestIDFrom(c))
 			c.Header("Retry-After", fmt.Sprintf("%d", int(window.Seconds())))
 			c.JSON(http.StatusTooManyRequests, gin.H{
-				"error": fmt.Sprintf("คำขอมากเกินไปสำหรับ %s กรุณารอ %v ก่อนลองใหม่", route, window),
+				"error":       "rate limit exceeded",
+				"code":        "RATE_LIMITED",
+				"scope":       route,
+				"retry_after": int(window.Seconds()),
+				"request_id":  requestIDFrom(c),
 			})
 			c.Abort()
 			return

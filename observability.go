@@ -205,7 +205,11 @@ func recoveryMiddleware() gin.HandlerFunc {
 				}
 				sloRouteSeries(route).recordPanic()
 				recordRequest(route, http.StatusInternalServerError, 0)
-				c.AbortWithStatus(http.StatusInternalServerError)
+				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
+					"error":      "internal server error",
+					"code":       "INTERNAL_ERROR",
+					"request_id": requestIDFrom(c),
+				})
 			}
 		}()
 		c.Next()
