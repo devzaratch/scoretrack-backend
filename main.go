@@ -31,7 +31,9 @@ var (
 
 	// WebSocket upgrader
 	upgrader = websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool { return true },
+		CheckOrigin: func(r *http.Request) bool {
+			return isAllowedHTTPRequestOrigin(r.Header.Get("Origin"))
+		},
 	}
 
 	// WebSocket Clients ถูกนับผ่าน GlobalLiveHub.ClientCount() แล้ว
@@ -41,6 +43,60 @@ var (
 	userFavorites   = make(map[string][]int)
 	userFavoritesMu sync.Mutex
 )
+
+func isAllowedHTTPRequestOrigin(origin string) bool {
+	origin = strings.TrimSpace(origin)
+	if origin == "" {
+		// non-browser/internal clients may omit Origin; browser WS requests include it
+		return true
+	}
+
+	for _, allowed := range strings.Split(getEnv("ALLOWED_ORIGINS", ""), ",") {
+		allowed = strings.TrimSpace(allowed)
+		if allowed != "" && strings.EqualFold(allowed, origin) {
+			return true
+		}
+	}
+
+	if strings.HasPrefix(origin, "http://localhost:") ||
+		strings.HasPrefix(origin, "http://127.0.0.1:") ||
+		origin == "http://localhost" ||
+		origin == "http://127.0.0.1" {
+		return true
+	}
+
+	if getEnv("ALLOW_VERCEL_PREVIEW", "false") == "true" && strings.HasSuffix(origin, ".vercel.app") {
+		return true
+	}
+
+	return false
+}
+
+func wsMaxConnections() int {
+	raw := strings.TrimSpace(getEnv("WS_MAX_CONNECTIONS", "500"))
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		return 500
+	}
+	return n
+}
+
+func wsAtConnectionLimit(live, chat int) bool {
+	max := wsMaxConnections()
+	return max >= 0 && live+chat >= max
+}
+
+func wsConnectionLimitReached() bool {
+	live := 0
+	if GlobalLiveHub != nil {
+		live = GlobalLiveHub.ClientCount()
+	}
+	chat := 0
+	if GlobalChatHub != nil {
+		chat = GlobalChatHub.ClientCount()
+	}
+	return wsAtConnectionLimit(live, chat)
+}
 
 // In-Memory Cache with TTL for fallback when Redis is absent
 type CacheItem struct {
@@ -210,30 +266,7 @@ func main() {
 	// 2. ตั้งค่า CORS รองรับทั้ง Localhost และ Production บน Vercel
 	r.Use(cors.New(cors.Config{
 		AllowOriginFunc: func(origin string) bool {
-			// โดเมน production ตั้งค่าผ่าน env ALLOWED_ORIGINS (คั่นด้วย comma)
-			// ตัวอย่าง: ALLOWED_ORIGINS=https://doballlaos.com,https://www.doballlaos.com
-			for _, allowed := range strings.Split(getEnv("ALLOWED_ORIGINS", ""), ",") {
-				allowed = strings.TrimSpace(allowed)
-				if allowed != "" && strings.EqualFold(allowed, origin) {
-					return true
-				}
-			}
-
-			// อนุญาต localhost เสมอสำหรับการพัฒนา
-			if strings.HasPrefix(origin, "http://localhost:") ||
-				strings.HasPrefix(origin, "http://127.0.0.1:") ||
-				origin == "http://localhost" ||
-				origin == "http://127.0.0.1" {
-				return true
-			}
-
-			// เปิด preview บน Vercel ได้เมื่อตั้ง ALLOW_VERCEL_PREVIEW=true เท่านั้น
-			// (อันตราย: ใครก็สร้างเว็บ *.vercel.app มาเรียก API เราได้)
-			if getEnv("ALLOW_VERCEL_PREVIEW", "false") == "true" && strings.HasSuffix(origin, ".vercel.app") {
-				return true
-			}
-
-			return false
+			return isAllowedHTTPRequestOrigin(origin)
 		},
 		AllowMethods:     []string{"GET", "POST", "OPTIONS", "PUT", "DELETE"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With", "X-Admin-Token"},
@@ -513,6 +546,10 @@ func main() {
 // ---------------------------------------------------------
 
 func handleWebSocket(c *gin.Context) {
+	if wsConnectionLimitReached() {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "websocket connection limit reached"})
+		return
+	}
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		logInfof("WebSocket Upgrade Error: %v", err)
@@ -634,6 +671,10 @@ var (
 
 func handleChatWebSocket(c *gin.Context) {
 	matchID := c.Param("id")
+	if wsConnectionLimitReached() {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "websocket connection limit reached"})
+		return
+	}
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		return

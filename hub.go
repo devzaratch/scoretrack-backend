@@ -333,6 +333,16 @@ func NewChatHub() *ChatHub {
 	}
 }
 
+func (h *ChatHub) ClientCount() int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	n := 0
+	for _, clients := range h.rooms {
+		n += len(clients)
+	}
+	return n
+}
+
 func (h *ChatHub) Run() {
 	for {
 		select {
