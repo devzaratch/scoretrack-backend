@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -67,7 +68,7 @@ func runBackupDrill() DrillResult {
 }
 
 // startBackupDrillLoop — goroutine รายวัน (เรียกจาก main)
-func startBackupDrillLoop() {
+func startBackupDrillLoop(ctx context.Context) {
 	if !envBool("BACKUP_DRILL", true) {
 		logInfof("🧪 backup drill: ปิดด้วย BACKUP_DRILL=off")
 		return
@@ -78,7 +79,11 @@ func startBackupDrillLoop() {
 	}
 
 	// รอ 2 นาทีให้ระบบ push snapshot รอบแรกก่อน
-	time.Sleep(2 * time.Minute)
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(2 * time.Minute):
+	}
 
 	run := func() {
 		res := runBackupDrill()
@@ -97,7 +102,12 @@ func startBackupDrillLoop() {
 	run()
 	ticker := time.NewTicker(time.Duration(hours) * time.Hour)
 	defer ticker.Stop()
-	for range ticker.C {
-		run()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			run()
+		}
 	}
 }

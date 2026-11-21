@@ -218,8 +218,12 @@ func main() {
 		}
 	}
 
+	// lifecycle context สำหรับหยุด workers/tickers และปิด WS hubs ตอน graceful shutdown
+	appCtx, appCancel := context.WithCancel(context.Background())
+	defer appCancel()
+
 	// เริ่ม Janitor สำหรับ in-memory cache (ถ้าไม่มี Redis)
-	startJanitor()
+	startJanitor(appCtx)
 
 	// เริ่มต้นหมุน Background Routine สำหรับยิง WebSocket Live Tick ทุก 5 วินาที
 	// 0. Initialize Persistent Database
@@ -227,36 +231,36 @@ func main() {
 	logAuthConfigWarnings()
 
 	// 1. Start Non-blocking WebSocket Hubs
-	go GlobalLiveHub.Run()
-	go GlobalChatHub.Run()
+	go GlobalLiveHub.RunContext(appCtx)
+	go GlobalChatHub.RunContext(appCtx)
 
 	// 2. Start Live Ticker Engine
-	go startLiveTicker()
+	go startLiveTicker(appCtx)
 
 	// 3. SLO + alerting + synthetic monitoring (แผนข้อ 9)
 	//    - ประเมิน availability/latency/freshness/provider/โควตา ทุก 60 วิ
 	//    - แจ้งเตือน Telegram เมื่อสถานะเปลี่ยน (ยังไม่ได้ตั้ง env = log อย่างเดียว)
 	//    - ยิงตรวจ endpoint ของตัวเองเป็นระยะ (healthz + sources)
-	go startSLOLoop()
-	go startSyntheticMonitor()
+	go startSLOLoop(appCtx)
+	go startSyntheticMonitor(appCtx)
 
 	// 4. Cache warmer (แผนข้อ 2) — เติม cache เป็นระยะ + กัน Render cold start
-	go startCacheWarmer()
+	go startCacheWarmer(appCtx)
 
 	// 5. Pre-match reminder (แผนใหม่ข้อ 3) — เตือนก่อนบอลเตะให้คนที่กด 🔔 ไว้
-	go startPreMatchReminder()
+	go startPreMatchReminder(appCtx)
 
 	// 6. Backup restore drill (แผนใหม่ข้อ 10) — พิสูจน์ว่า snapshot กู้ได้จริง
-	go startBackupDrillLoop()
+	go startBackupDrillLoop(appCtx)
 
 	// 7. Season archive (แผนใหม่ข้อ 4) — เก็บผลแมตช์จบลง Redis/memory
-	go startArchiveSweeper()
+	go startArchiveSweeper(appCtx)
 
 	// 7b. Metrics digest รายวัน (แผน-v2 ข้อ 4) — snapshot metrics ต่อวันให้ admin
-	go startMetricsDigest()
+	go startMetricsDigest(appCtx)
 
 	// 8. Admin watchdog (roadmap รอบ 3 ข้อ 8) — พัง/กลับมาปกติ = แจ้งทันที (webhook หรือ LINE)
-	startAdminAlertWatchdog(ctx, time.Duration(getEnvInt("ADMIN_WATCHDOG_INTERVAL_SECONDS", 60))*time.Second)
+	startAdminAlertWatchdog(appCtx, time.Duration(getEnvInt("ADMIN_WATCHDOG_INTERVAL_SECONDS", 60))*time.Second)
 
 	// gin.New + middleware ของเราเอง (แผนข้อ 9): gin.Default() = [GIN] free text
 	// logger + Recovery ไม่มี field — ตอนนี้ request log เป็น JSON ทุกบรรทัด
@@ -546,7 +550,12 @@ func main() {
 			logFatalf("❌ Server ล่ม: %v", err)
 		}
 	case sig := <-quit:
-		logInfof("🛑 ได้รับสัญญาณ %v — กำลังปิดเซิร์ฟเวอร์อย่างปลอดภัย...", sig)
+		logInfof("🛑 ได้รับสัญญาณ %v — กำลังปิดเซิร์ฟเวอร์อย่างปลอดภัย (หยุด workers และ drain WS/HTTP)...", sig)
+
+		// หยุด background workers/tickers และสั่งปิด WS hubs/clients ก่อน drain HTTP
+		appCancel()
+		GlobalLiveHub.Shutdown()
+		GlobalChatHub.Shutdown()
 
 		// ตัด timeout กันค้าง: connection ที่ยัง open (เช่น WS) ถูก force-close เมื่อหมดเวลา
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -586,20 +595,27 @@ func handleWebSocket(c *gin.Context) {
 		conn: conn,
 		send: make(chan []byte, sendChannelCap),
 	}
-	client.hub.register <- client
+	if !client.hub.registerClient(client) {
+		return
+	}
 
 	go client.writePump()
 	go client.readPump()
 }
 
-func startLiveTicker() {
+func startLiveTicker(ctx context.Context) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
 	var lastREST time.Time
 	var lastInvalidate time.Time
 
-	for range ticker.C {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
 		// นับ client จริงจาก Hub (ตัวแปร wsClients เดิมไม่เคยถูกเติมค่า
 		// ทำให้ ticker ข้ามทุกครั้ง -> หน้าแรกไม่เคยได้คะแนนสดอัตโนมัติ)
 		clientCount := GlobalLiveHub.ClientCount()
@@ -712,12 +728,17 @@ func handleChatWebSocket(c *gin.Context) {
 		matchID: matchID,
 		ip:      c.ClientIP(), // rate limit ต่อ user ใน readPump
 	}
-	client.hub.register <- client
+	if !client.hub.registerClient(client) {
+		return
+	}
 
 	// 1. Send recent chat history
 	history := GlobalChatHub.GetRoomHistory(matchID)
 	if historyBytes, err := json.Marshal(history); err == nil {
-		client.send <- historyBytes
+		select {
+		case client.send <- historyBytes:
+		default:
+		}
 	}
 
 	go client.writePump()

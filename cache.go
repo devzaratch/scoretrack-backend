@@ -1,4 +1,4 @@
-package main
+﻿package main
 
 import (
 	"context"
@@ -112,15 +112,20 @@ func (c *MemoryCache) DeletePrefix(prefix string) {
 
 // startJanitor ล้าง expired items ทุก 5 นาที (memory cache เท่านั้น)
 // Redis มี TTL ในตัว ไม่ต้อง janitor
-func startJanitor() {
+func startJanitor(ctx context.Context) {
 	if rdb != nil {
 		return // Redis จัดการ TTL เอง
 	}
 	go func() {
 		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
-		for range ticker.C {
-			memoryCache.Cleanup()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				memoryCache.Cleanup()
+			}
 		}
 	}()
 }

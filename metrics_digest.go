@@ -200,7 +200,7 @@ func loadDigests(limit int) ([]DailyDigest, error) {
 
 // startMetricsDigest — goroutine จาก main: snapshot ทันทีตอนเริ่ม (ถ้าวันนี้ยังไม่มี)
 // แล้วตรวจทุกชั่วโมง วันเปลี่ยนจะ snapshot วันใหม่ พร้อม log บรรทัดเดียวให้ admin อ่าน
-func startMetricsDigest() {
+func startMetricsDigest(ctx context.Context) {
 	snap := func() {
 		d, err := snapshotDailyDigest(time.Now())
 		if err != nil {
@@ -213,8 +213,13 @@ func startMetricsDigest() {
 	go func() {
 		t := time.NewTicker(time.Hour)
 		defer t.Stop()
-		for range t.C {
-			snap()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				snap()
+			}
 		}
 	}()
 }

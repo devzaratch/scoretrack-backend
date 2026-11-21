@@ -19,6 +19,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -861,20 +862,29 @@ func snapshotSynthetic() map[string]interface{} {
 }
 
 // startSyntheticMonitor — ยิงตรวจเป็นระยะ (ค่าเริ่มต้น 5 นาที)
-func startSyntheticMonitor() {
+func startSyntheticMonitor(ctx context.Context) {
 	interval := time.Duration(sloIntEnv("SYNTHETIC_INTERVAL_SEC", 300)) * time.Second
 	if interval < 30*time.Second {
 		interval = 30 * time.Second
 	}
 	// ตรวจรอบแรกหลังขึ้น 15 วิ (ให้เซิร์ฟเวอร์พร้อมก่อน)
-	time.Sleep(15 * time.Second)
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(15 * time.Second):
+	}
 	runSyntheticCheck()
 	logInfof("🩺 synthetic monitor เริ่มทำงาน (ทุก %v)", interval)
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	for range ticker.C {
-		runSyntheticCheck()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			runSyntheticCheck()
+		}
 	}
 }
 
@@ -883,16 +893,21 @@ func startSyntheticMonitor() {
 // ---------------------------------------------------------------------------
 
 // startSLOLoop — ประเมินกฎทุก 60 วิ แล้วส่งแจ้งเตือนตาม state machine
-func startSLOLoop() {
+func startSLOLoop(ctx context.Context) {
 	interval := time.Duration(sloIntEnv("ALERT_INTERVAL_SEC", 60)) * time.Second
 	if interval < 15*time.Second {
 		interval = 15 * time.Second
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	for range ticker.C {
-		rules := evaluateSLO()
-		processAlerts(rules)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			rules := evaluateSLO()
+			processAlerts(rules)
+		}
 	}
 }
 

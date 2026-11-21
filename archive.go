@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -216,7 +217,7 @@ func findArchived(season string, matchID int) (ArchivedMatch, bool) {
 }
 
 // startArchiveSweeper — goroutine เก็บผลแมตช์จบเป็นระยะ
-func startArchiveSweeper() {
+func startArchiveSweeper(ctx context.Context) {
 	if !envBool("ARCHIVE_SWEEP", true) {
 		logInfof("🗄️ archive: ปิดด้วย ARCHIVE_SWEEP=off")
 		return
@@ -225,7 +226,11 @@ func startArchiveSweeper() {
 	if min < 5 {
 		min = 5
 	}
-	time.Sleep(3 * time.Minute)
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(3 * time.Minute):
+	}
 	sweep := func() {
 		raw, source, ok := fetchMatchesFromProviders(normalizeDateKey(""))
 		if !ok || len(raw) == 0 {
@@ -243,8 +248,13 @@ func startArchiveSweeper() {
 	sweep()
 	ticker := time.NewTicker(time.Duration(min) * time.Minute)
 	defer ticker.Stop()
-	for range ticker.C {
-		sweep()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			sweep()
+		}
 	}
 }
 

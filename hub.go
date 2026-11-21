@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -31,7 +32,7 @@ type LiveClient struct {
 
 func (c *LiveClient) readPump() {
 	defer func() {
-		c.hub.unregister <- c
+		c.hub.unregisterClient(c)
 		c.conn.Close()
 	}()
 	c.conn.SetReadLimit(maxMessageSize)
@@ -112,6 +113,8 @@ type LiveHub struct {
 	mu         sync.RWMutex
 	// สถิติ message ที่ถูกทิ้งเพราะคิวเต็ม/ลูกค้าช้า — เอามดูใน /api/_sources
 	droppedBroadcasts atomic.Int64
+	stop              chan struct{}
+	stopOnce          sync.Once
 }
 
 func NewLiveHub() *LiveHub {
@@ -120,22 +123,42 @@ func NewLiveHub() *LiveHub {
 		register:   make(chan *LiveClient),
 		unregister: make(chan *LiveClient),
 		clients:    make(map[*LiveClient]bool),
+		stop:       make(chan struct{}),
 	}
 }
 
 func (h *LiveHub) Run() {
+	h.RunContext(context.Background())
+}
+
+func (h *LiveHub) RunContext(ctx context.Context) {
 	for {
 		select {
+		case <-ctx.Done():
+			h.shutdownClients()
+			return
+		case <-h.stop:
+			h.shutdownClients()
+			return
 		case client := <-h.register:
 			h.mu.Lock()
-			h.clients[client] = true
-			h.mu.Unlock()
-			logInfof("Live Client connected (Total active: %d)", h.ClientCount())
+			select {
+			case <-h.stop:
+				h.mu.Unlock()
+				safeCloseSend(client.send)
+				if client.conn != nil {
+					client.conn.Close()
+				}
+			default:
+				h.clients[client] = true
+				h.mu.Unlock()
+				logInfof("Live Client connected (Total active: %d)", h.ClientCount())
+			}
 		case client := <-h.unregister:
 			h.mu.Lock()
 			if _, ok := h.clients[client]; ok {
 				delete(h.clients, client)
-				close(client.send)
+				safeCloseSend(client.send)
 			}
 			h.mu.Unlock()
 			logInfof("Live Client disconnected (Total active: %d)", h.ClientCount())
@@ -151,13 +174,72 @@ func (h *LiveHub) Run() {
 					// ลูกค้าช้าเกิน (send เต็ม 256) → ตัดทิ้ง policy เดิมคงไว้
 					// close ก่อน delete + ทุกอย่างอยู่ใต้ lock เดียวกัน
 					// → unregister สายตามจะเห็นว่าไม่อยู่ใน map แล้ว ไม่ double-close
-					close(client.send)
+					safeCloseSend(client.send)
 					delete(h.clients, client)
 				}
 			}
 			h.mu.Unlock()
 		}
 	}
+}
+
+func (h *LiveHub) Shutdown() {
+	h.stopOnce.Do(func() { close(h.stop) })
+	h.shutdownClients()
+}
+
+func (h *LiveHub) isStopping() bool {
+	select {
+	case <-h.stop:
+		return true
+	default:
+		return false
+	}
+}
+
+func (h *LiveHub) registerClient(c *LiveClient) bool {
+	if h.isStopping() {
+		safeCloseSend(c.send)
+		if c.conn != nil {
+			c.conn.Close()
+		}
+		return false
+	}
+	select {
+	case h.register <- c:
+		return true
+	case <-h.stop:
+		safeCloseSend(c.send)
+		if c.conn != nil {
+			c.conn.Close()
+		}
+		return false
+	}
+}
+
+func (h *LiveHub) unregisterClient(c *LiveClient) {
+	select {
+	case h.unregister <- c:
+	case <-h.stop:
+		// Shutdown path: hub loop may have exited; avoid blocking readPump goroutine.
+	}
+}
+
+func (h *LiveHub) shutdownClients() {
+	h.mu.Lock()
+	for client := range h.clients {
+		delete(h.clients, client)
+		safeCloseSend(client.send)
+		if client.conn != nil {
+			client.conn.Close()
+		}
+	}
+	h.mu.Unlock()
+}
+
+func safeCloseSend(ch chan []byte) {
+	defer func() { _ = recover() }()
+	close(ch)
 }
 
 func (h *LiveHub) ClientCount() int {
@@ -207,7 +289,7 @@ type ChatClient struct {
 
 func (c *ChatClient) readPump() {
 	defer func() {
-		c.hub.unregister <- c
+		c.hub.unregisterClient(c)
 		c.conn.Close()
 	}()
 	c.conn.SetReadLimit(maxMessageSize)
@@ -322,6 +404,8 @@ type ChatHub struct {
 	register   chan *ChatClient
 	unregister chan *ChatClient
 	mu         sync.RWMutex
+	stop       chan struct{}
+	stopOnce   sync.Once
 }
 
 func NewChatHub() *ChatHub {
@@ -330,6 +414,7 @@ func NewChatHub() *ChatHub {
 		history:    make(map[string][]map[string]interface{}),
 		register:   make(chan *ChatClient),
 		unregister: make(chan *ChatClient),
+		stop:       make(chan struct{}),
 	}
 }
 
@@ -344,21 +429,40 @@ func (h *ChatHub) ClientCount() int {
 }
 
 func (h *ChatHub) Run() {
+	h.RunContext(context.Background())
+}
+
+func (h *ChatHub) RunContext(ctx context.Context) {
 	for {
 		select {
+		case <-ctx.Done():
+			h.shutdownClients()
+			return
+		case <-h.stop:
+			h.shutdownClients()
+			return
 		case client := <-h.register:
 			h.mu.Lock()
-			if h.rooms[client.matchID] == nil {
-				h.rooms[client.matchID] = make(map[*ChatClient]bool)
+			select {
+			case <-h.stop:
+				h.mu.Unlock()
+				safeCloseSend(client.send)
+				if client.conn != nil {
+					client.conn.Close()
+				}
+			default:
+				if h.rooms[client.matchID] == nil {
+					h.rooms[client.matchID] = make(map[*ChatClient]bool)
+				}
+				h.rooms[client.matchID][client] = true
+				h.mu.Unlock()
 			}
-			h.rooms[client.matchID][client] = true
-			h.mu.Unlock()
 		case client := <-h.unregister:
 			h.mu.Lock()
 			if clients, ok := h.rooms[client.matchID]; ok {
 				if _, exists := clients[client]; exists {
 					delete(clients, client)
-					close(client.send)
+					safeCloseSend(client.send)
 				}
 				if len(clients) == 0 {
 					delete(h.rooms, client.matchID)
@@ -367,6 +471,62 @@ func (h *ChatHub) Run() {
 			h.mu.Unlock()
 		}
 	}
+}
+
+func (h *ChatHub) Shutdown() {
+	h.stopOnce.Do(func() { close(h.stop) })
+	h.shutdownClients()
+}
+
+func (h *ChatHub) isStopping() bool {
+	select {
+	case <-h.stop:
+		return true
+	default:
+		return false
+	}
+}
+
+func (h *ChatHub) registerClient(c *ChatClient) bool {
+	if h.isStopping() {
+		safeCloseSend(c.send)
+		if c.conn != nil {
+			c.conn.Close()
+		}
+		return false
+	}
+	select {
+	case h.register <- c:
+		return true
+	case <-h.stop:
+		safeCloseSend(c.send)
+		if c.conn != nil {
+			c.conn.Close()
+		}
+		return false
+	}
+}
+
+func (h *ChatHub) unregisterClient(c *ChatClient) {
+	select {
+	case h.unregister <- c:
+	case <-h.stop:
+	}
+}
+
+func (h *ChatHub) shutdownClients() {
+	h.mu.Lock()
+	for matchID, clients := range h.rooms {
+		for client := range clients {
+			delete(clients, client)
+			safeCloseSend(client.send)
+			if client.conn != nil {
+				client.conn.Close()
+			}
+		}
+		delete(h.rooms, matchID)
+	}
+	h.mu.Unlock()
 }
 
 func (h *ChatHub) GetRoomHistory(matchID string) []map[string]interface{} {

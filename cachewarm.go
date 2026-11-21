@@ -17,6 +17,7 @@ package main
 //      WARMUP_LEAGUES="47,87,169", WARMUP_DAYS_AHEAD=1
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -171,7 +172,7 @@ func doWarmPing() (string, error) {
 }
 
 // startCacheWarmer — เริ่มลูปเติม cache
-func startCacheWarmer() {
+func startCacheWarmer(ctx context.Context) {
 	if !warmupEnabled() {
 		logInfof("🔥 cache warmer: ปิดอยู่ (WARMUP_ENABLED=0)")
 		return
@@ -181,14 +182,23 @@ func startCacheWarmer() {
 		interval = 60 * time.Second
 	}
 	// รอบแรกหลังขึ้น 45 วิ (ให้เซิร์ฟเวอร์ + provider พร้อมก่อน)
-	time.Sleep(45 * time.Second)
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(45 * time.Second):
+	}
 	warmOnce()
 	logInfof("🔥 cache warmer เริ่มทำงาน (ทุก %v)", interval)
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	for range ticker.C {
-		warmOnce()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			warmOnce()
+		}
 	}
 }
 

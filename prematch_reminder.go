@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -27,7 +28,7 @@ type PreMatchReminder struct {
 var GlobalPreMatchReminder = &PreMatchReminder{sent: make(map[int]int64)}
 
 // startPreMatchReminder — เรียกจาก main() แบบ go routine
-func startPreMatchReminder() {
+func startPreMatchReminder(ctx context.Context) {
 	if !envBool("PREMATCH_REMINDER", true) {
 		logInfof("⏰ pre-match reminder: ปิดด้วย PREMATCH_REMINDER=off")
 		return
@@ -46,11 +47,20 @@ func startPreMatchReminder() {
 	defer ticker.Stop()
 
 	// รอ 1 นาทีหลัง start — ให้ cache warmer/provider พร้อมก่อน
-	time.Sleep(time.Minute)
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(time.Minute):
+	}
 	GlobalPreMatchReminder.runOnce(windowMin)
 
-	for range ticker.C {
-		GlobalPreMatchReminder.runOnce(windowMin)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			GlobalPreMatchReminder.runOnce(windowMin)
+		}
 	}
 }
 
