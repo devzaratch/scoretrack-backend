@@ -76,6 +76,12 @@ func (db *PersistentDB) restoreFromSnapshot() bool {
 	if snap.Achievements != nil {
 		db.data.Achievements = snap.Achievements
 	}
+	if snap.AdminAuthFails != nil {
+		db.data.AdminAuthFails = snap.AdminAuthFails
+	}
+	if snap.AdminAuditLogs != nil {
+		db.data.AdminAuditLogs = snap.AdminAuditLogs
+	}
 	db.dirty = true // syncWorker เขียนไฟล์ local ให้ mirror ภายใน 3 วิ
 	logInfof("♻️ กู้ข้อมูลผู้ใช้จาก Redis snapshot สำเร็จ (%d sessions, %d favorites, %d predictions, %d fcm)",
 		len(snap.UserSessions), len(snap.UserFavorites), len(snap.Predictions), len(snap.FCMTokens))

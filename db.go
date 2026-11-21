@@ -12,6 +12,20 @@ import (
 	"time"
 )
 
+type AdminAuthFailRecord struct {
+	Fails       int   `json:"fails"`
+	WindowStart int64 `json:"window_start_unix,omitempty"`
+	LockedUntil int64 `json:"locked_until_unix,omitempty"`
+}
+
+type AdminAuditRecord struct {
+	Time   string `json:"time"`
+	IP     string `json:"ip"`
+	Method string `json:"method"`
+	Path   string `json:"path"`
+	Status int    `json:"status"`
+}
+
 type StoreData struct {
 	ChatMessages          map[string][]map[string]interface{} `json:"chat_messages"`
 	UserFavorites         map[string][]int                    `json:"user_favorites"`
@@ -24,14 +38,17 @@ type StoreData struct {
 	APIKeys               map[string]APIKeyRecord             `json:"api_keys"`           // api key -> record (แผนข้อ 7: public API)
 	UserInterests         map[string][]string                 `json:"user_interests"`     // userID -> ["league:47", "team:arsenal fc"] (แผนข้อ 4)
 	// --- Auth V2 (ข้อ 1 รอบใหม่) ---
-	UserProfiles         map[string]UserProfile             `json:"user_profiles"`       // sub -> profile
-	EmailToSub           map[string]string                  `json:"email_to_sub"`        // email -> sub
-	UserPasswords        map[string]string                  `json:"user_passwords"`      // email -> bcrypt hash
-	VerificationCodes    map[string]VerificationCode        `json:"verification_codes"`  // email -> code + expiry
-	PasswordResets       map[string]PasswordReset           `json:"password_resets"`     // email -> token + expiry
-	RefreshTokens        map[string]string                  `json:"refresh_tokens"`      // sub -> refresh token
-	RefreshExpires       map[string]int64                   `json:"refresh_expires"`     // sub -> unix expiry
-	ChatReports          []ChatReport                       `json:"chat_reports"`        // (Phase B ข้อ 10) รายงานข้อความแชทจากผู้ใช้
+	UserProfiles      map[string]UserProfile          `json:"user_profiles"`      // sub -> profile
+	EmailToSub        map[string]string               `json:"email_to_sub"`       // email -> sub
+	UserPasswords     map[string]string               `json:"user_passwords"`     // email -> bcrypt hash
+	VerificationCodes map[string]VerificationCode     `json:"verification_codes"` // email -> code + expiry
+	PasswordResets    map[string]PasswordReset        `json:"password_resets"`    // email -> token + expiry
+	RefreshTokens     map[string]string               `json:"refresh_tokens"`     // sub -> refresh token
+	RefreshExpires    map[string]int64                `json:"refresh_expires"`    // sub -> unix expiry
+	ChatReports       []ChatReport                    `json:"chat_reports"`       // (Phase B ข้อ 10) รายงานข้อความแชทที่ผู้ใช้กดรายงาน
+	// --- Hardening set4 task 6: admin lockout/audit durability ---
+	AdminAuthFails map[string]AdminAuthFailRecord `json:"admin_auth_fails,omitempty"`
+	AdminAuditLogs []AdminAuditRecord             `json:"admin_audit_logs,omitempty"`
 }
 
 type PersistentDB struct {
@@ -57,17 +74,7 @@ func InitDB() *PersistentDB {
 	dbPath := filepath.Join(dataDir, "store.json")
 	db := &PersistentDB{
 		filePath: dbPath,
-		data: StoreData{
-			ChatMessages:          make(map[string][]map[string]interface{}),
-			UserFavorites:         make(map[string][]int),
-			UserSessions:          make(UserSessionStore),
-			MatchSubscriptions:    make(map[int][]string),
-			FCMTokens:             make(map[string]int64),
-			Predictions:           make(map[string]map[string]interface{}),
-			UserNotificationPrefs: make(map[string]map[string]interface{}),
-			Achievements:          make(map[string][]string),
-			APIKeys:               make(map[string]APIKeyRecord),
-		},
+		data:     newEmptyStoreData(),
 	}
 
 	// แผนข้อ 1: เลือกที่เก็บข้อมูล (Postgres ถ้าตั้ง DATA_BACKEND=postgres, ไม่งั้นไฟล์แบบเดิม)

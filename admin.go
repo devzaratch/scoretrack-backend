@@ -26,7 +26,7 @@ import (
 //     ลง logs/admin-audit.log (เปลี่ยน path ได้ด้วย env ADMIN_AUDIT_LOG)
 // ============================================================
 
-// adminAuthFailState — นับความผิดต่อ IP
+// adminAuthFailState — เก็บสถานะล็อกอินผิดของ IP (in-memory fallback เมื่อไม่มี GlobalDB)
 type adminAuthFailState struct {
 	Fails       int
 	WindowStart time.Time
@@ -36,6 +36,12 @@ type adminAuthFailState struct {
 var (
 	adminAuthMu    sync.Mutex
 	adminAuthFails = map[string]*adminAuthFailState{}
+)
+
+const (
+	adminAuditMaxRecords  = 500
+	adminAuditRetention   = 30 * 24 * time.Hour
+	adminAuthFailStaleAge = 24 * time.Hour
 )
 
 // adminAuthLimits — อ่านค่าจาก env (default: 5 ครั้ง / ล็อก 10 นาที)
@@ -64,18 +70,20 @@ func adminClientIP(c *gin.Context) string {
 
 // adminAuthLocked — เช็คว่า IP นี้ถูกล็อกอยู่ไหม
 func adminAuthLocked(ip string) (bool, int) {
+	now := time.Now()
+	if GlobalDB != nil {
+		locked, retrySec, _ := GlobalDB.GetAdminAuthLock(ip, now)
+		return locked, retrySec
+	}
 	adminAuthMu.Lock()
 	defer adminAuthMu.Unlock()
-
 	st, ok := adminAuthFails[ip]
 	if !ok {
 		return false, 0
 	}
-	now := time.Now()
 	if !st.LockedUntil.IsZero() && now.Before(st.LockedUntil) {
 		return true, int(st.LockedUntil.Sub(now).Seconds()) + 1
 	}
-	// หมดช่วงเวลาแล้ว -> ล้างประวัติ
 	if st.LockedUntil.IsZero() && now.Sub(st.WindowStart) > 10*time.Minute {
 		delete(adminAuthFails, ip)
 	}
@@ -85,10 +93,13 @@ func adminAuthLocked(ip string) (bool, int) {
 // adminAuthNoteFail — บันทึก 1 ความผิด (ครบเกณฑ์ -> ล็อก IP)
 func adminAuthNoteFail(ip string) {
 	maxFails, lockMinutes := adminAuthLimits()
+	now := time.Now()
+	if GlobalDB != nil {
+		GlobalDB.NoteAdminAuthFail(ip, now, maxFails, lockMinutes)
+		return
+	}
 	adminAuthMu.Lock()
 	defer adminAuthMu.Unlock()
-
-	now := time.Now()
 	st, ok := adminAuthFails[ip]
 	if !ok || (st.LockedUntil.IsZero() && now.Sub(st.WindowStart) > 10*time.Minute) {
 		st = &adminAuthFailState{WindowStart: now}
@@ -98,8 +109,6 @@ func adminAuthNoteFail(ip string) {
 	if st.Fails >= maxFails {
 		st.LockedUntil = now.Add(time.Duration(lockMinutes) * time.Minute)
 	}
-
-	// กันหน่วยความจำบวมถ้ามี IP ยิงผิดเยอะ (ตัดรายการเก่าที่หมดอายุ)
 	if len(adminAuthFails) > 1000 {
 		for k, v := range adminAuthFails {
 			if v.LockedUntil.IsZero() && now.Sub(v.WindowStart) > 10*time.Minute {
@@ -111,6 +120,10 @@ func adminAuthNoteFail(ip string) {
 
 // adminAuthResetFails — สำเร็จ -> ล้างประวัติความผิดของ IP
 func adminAuthResetFails(ip string) {
+	if GlobalDB != nil {
+		GlobalDB.ResetAdminAuthFails(ip)
+		return
+	}
 	adminAuthMu.Lock()
 	defer adminAuthMu.Unlock()
 	delete(adminAuthFails, ip)
@@ -118,23 +131,26 @@ func adminAuthResetFails(ip string) {
 
 // writeAdminAudit — บันทึกคำขอที่เปลี่ยนแปลงข้อมูล (JSON line ต่อแถว)
 func writeAdminAudit(ip, method, path string, status int) {
-	entry := map[string]interface{}{
-		"time":   time.Now().UTC().Format(time.RFC3339),
-		"ip":     ip,
-		"method": method,
-		"path":   path,
-		"status": status,
+	rec := AdminAuditRecord{
+		Time:   time.Now().UTC().Format(time.RFC3339),
+		IP:     ip,
+		Method: method,
+		Path:   path,
+		Status: status,
 	}
-	line, _ := json.Marshal(entry)
-
-	logPath := getEnv("ADMIN_AUDIT_LOG", "logs/admin-audit.log")
-	if err := os.MkdirAll("logs", 0755); err == nil {
-		if f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600); err == nil {
-			_, _ = f.Write(append(line, '\n'))
-			_ = f.Close()
+	if GlobalDB != nil {
+		GlobalDB.AppendAdminAudit(rec)
+	} else {
+		line, _ := json.Marshal(rec)
+		logPath := getEnv("ADMIN_AUDIT_LOG", "logs/admin-audit.log")
+		if err := os.MkdirAll("logs", 0755); err == nil {
+			if f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600); err == nil {
+				_, _ = f.Write(append(line, '\n'))
+				_ = f.Close()
+			}
 		}
 	}
-	logInfof("📝 admin audit: %s %s -> %d (ip=%s)", method, path, status, ip)
+	logInfof("admin audit: %s %s -> %d (ip=%s)", method, path, status, ip)
 }
 
 // adminAuthMiddleware ตรวจสอบ X-Admin-Token กับ env ADMIN_TOKEN

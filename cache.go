@@ -125,6 +125,12 @@ func startJanitor(ctx context.Context) {
 				return
 			case <-ticker.C:
 				memoryCache.Cleanup()
+				if GlobalDB != nil {
+					if removed := GlobalDB.PruneExpiredUserSessions(); removed > 0 {
+						logInfof("auth: pruned %d expired user sessions", removed)
+					}
+					GlobalDB.PruneAdminAuthState(time.Now())
+				}
 			}
 		}
 	}()

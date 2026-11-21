@@ -50,6 +50,8 @@ func newEmptyStoreData() StoreData {
 		Achievements:          make(map[string][]string),
 		APIKeys:               make(map[string]APIKeyRecord),
 		UserInterests:         make(map[string][]string),
+		AdminAuthFails:        make(map[string]AdminAuthFailRecord),
+		AdminAuditLogs:        []AdminAuditRecord{},
 	}
 }
 
@@ -85,6 +87,12 @@ func mergeLoaded(loaded StoreData) StoreData {
 	}
 	if loaded.UserInterests != nil {
 		base.UserInterests = loaded.UserInterests
+	}
+	if loaded.AdminAuthFails != nil {
+		base.AdminAuthFails = loaded.AdminAuthFails
+	}
+	if loaded.AdminAuditLogs != nil {
+		base.AdminAuditLogs = loaded.AdminAuditLogs
 	}
 	return base
 }
