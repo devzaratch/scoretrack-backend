@@ -111,17 +111,60 @@ func (db *PersistentDB) DeletePasswordReset(email string) {
 
 // GetSubByRefreshToken ค้นหา sub จาก refresh token
 func (db *PersistentDB) GetSubByRefreshToken(token string) string {
+	now := time.Now().Unix()
 	db.mu.RLock()
-	defer db.mu.RUnlock()
 	for sub, rt := range db.data.RefreshTokens {
 		if rt == token {
+			exp := db.data.RefreshExpires[sub]
+			db.mu.RUnlock()
+			if exp > 0 && now >= exp {
+				db.DeleteRefreshToken(token)
+				return ""
+			}
 			return sub
 		}
 	}
+	db.mu.RUnlock()
 	return ""
 }
 
-// SaveRefreshToken บันทึก refresh token ของ sub ไว้
+// PruneExpiredAuthTransientData removes expired verification/reset/refresh records.
+func (db *PersistentDB) PruneExpiredAuthTransientData() int {
+	now := time.Now().Unix()
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	removed := 0
+	for email, vc := range db.data.VerificationCodes {
+		if vc.Expires > 0 && now >= vc.Expires {
+			delete(db.data.VerificationCodes, email)
+			removed++
+		}
+	}
+	for email, pr := range db.data.PasswordResets {
+		if pr.Expires > 0 && now >= pr.Expires {
+			delete(db.data.PasswordResets, email)
+			removed++
+		}
+	}
+	for sub, exp := range db.data.RefreshExpires {
+		if exp > 0 && now >= exp {
+			if db.data.RefreshTokens != nil {
+				if _, ok := db.data.RefreshTokens[sub]; ok {
+					delete(db.data.RefreshTokens, sub)
+					removed++
+				}
+			}
+			delete(db.data.RefreshExpires, sub)
+			removed++
+		}
+	}
+	if removed > 0 {
+		db.dirty = true
+	}
+	return removed
+}
+
+// SaveRefreshToken// SaveRefreshToken บันทึก refresh token ของ sub ไว้
 func (db *PersistentDB) SaveRefreshToken(sub string, token string, expiresAt int64) {
 	db.mu.Lock()
 	defer db.mu.Unlock()

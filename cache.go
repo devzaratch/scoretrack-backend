@@ -129,6 +129,9 @@ func startJanitor(ctx context.Context) {
 					if removed := GlobalDB.PruneExpiredUserSessions(); removed > 0 {
 						logInfof("auth: pruned %d expired user sessions", removed)
 					}
+					if removed := GlobalDB.PruneExpiredAuthTransientData(); removed > 0 {
+						logInfof("auth: pruned %d expired verification/reset/refresh records", removed)
+					}
 					GlobalDB.PruneAdminAuthState(time.Now())
 				}
 			}
