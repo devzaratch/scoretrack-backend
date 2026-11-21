@@ -421,6 +421,8 @@ func (h *ChatHub) BroadcastToRoom(matchID string, msg map[string]interface{}) {
 // 3. Rate Limiter with Auto Garbage Collection
 // ==========================================
 
+const rateLimiterMaxKeys = 20000
+
 type ClientRateRecord struct {
 	LastSeen time.Time
 	Count    int
@@ -453,6 +455,9 @@ func (r *MemoryRateLimiter) AllowKey(key string, maxReqs int, window time.Durati
 	now := time.Now()
 	rec, exists := r.records[key]
 	if !exists || now.Sub(rec.LastSeen) > window {
+		if !exists && len(r.records) >= rateLimiterMaxKeys {
+			r.evictLocked(now)
+		}
 		r.records[key] = &ClientRateRecord{LastSeen: now, Count: 1}
 		return true
 	}
@@ -461,6 +466,25 @@ func (r *MemoryRateLimiter) AllowKey(key string, maxReqs int, window time.Durati
 	rec.LastSeen = now
 
 	return rec.Count <= maxReqs
+}
+
+// evictLocked removes stale entries and, if still over cap, drops arbitrary keys.
+// Caller must hold r.mu write lock.
+func (r *MemoryRateLimiter) evictLocked(now time.Time) {
+	// First pass: drop clearly stale entries (older than cleaner TTL window).
+	for k, rec := range r.records {
+		if now.Sub(rec.LastSeen) > 3*time.Minute {
+			delete(r.records, k)
+		}
+	}
+	for len(r.records) >= rateLimiterMaxKeys {
+		for k := range r.records {
+			delete(r.records, k)
+			if len(r.records) < rateLimiterMaxKeys {
+				break
+			}
+		}
+	}
 }
 
 func (r *MemoryRateLimiter) startCleaner(interval time.Duration, ttl time.Duration) {

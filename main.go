@@ -104,6 +104,8 @@ type CacheItem struct {
 	ExpiresAt time.Time
 }
 
+const memoryCacheMaxItems = 2000
+
 type MemoryCache struct {
 	mu    sync.RWMutex
 	items map[string]CacheItem
@@ -131,9 +133,32 @@ func (c *MemoryCache) Set(key string, data []byte, ttl time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	now := time.Now()
+	if _, exists := c.items[key]; !exists && len(c.items) >= memoryCacheMaxItems {
+		c.evictLocked(now)
+	}
+
 	c.items[key] = CacheItem{
 		Data:      data,
-		ExpiresAt: time.Now().Add(ttl),
+		ExpiresAt: now.Add(ttl),
+	}
+}
+
+// evictLocked removes expired items and, if still over cap, evicts arbitrary entries.
+// Caller must hold c.mu write lock.
+func (c *MemoryCache) evictLocked(now time.Time) {
+	for k, item := range c.items {
+		if now.After(item.ExpiresAt) {
+			delete(c.items, k)
+		}
+	}
+	for len(c.items) >= memoryCacheMaxItems {
+		for k := range c.items {
+			delete(c.items, k)
+			if len(c.items) < memoryCacheMaxItems {
+				break
+			}
+		}
 	}
 }
 

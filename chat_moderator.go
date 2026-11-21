@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -157,6 +158,11 @@ const (
 	strikeThreshold = 3
 	strikeWindow    = 10 * time.Minute
 	muteDuration    = 5 * time.Minute
+
+	// Task 4 mitigation: bound in-memory moderation state on long-lived single instances.
+	chatModerationMaxEntries  = 5000
+	chatOffenderStaleAge      = 2 * time.Hour
+	chatModerationPruneEveryN = 128
 )
 
 type offenderRecord struct {
@@ -167,9 +173,55 @@ type offenderRecord struct {
 
 var chatOffenders sync.Map // ip -> *offenderRecord
 var offendersMu sync.Mutex
+var chatModPruneCounter atomic.Uint64
+
+func maybePruneChatModerationState() {
+	if chatModPruneCounter.Add(1)%chatModerationPruneEveryN == 0 {
+		pruneChatModerationState()
+	}
+}
+
+// pruneChatModerationState removes stale offender records and caps duplicate-tracking entries.
+// Safe to call without holding offendersMu (offender records are small value snapshots for reads).
+func pruneChatModerationState() {
+	now := time.Now()
+	chatOffenders.Range(func(key, value interface{}) bool {
+		rec, ok := value.(*offenderRecord)
+		if !ok || rec == nil {
+			chatOffenders.Delete(key)
+			return true
+		}
+		if time.Until(rec.until) > 0 {
+			return true // active mute, keep
+		}
+		if !rec.firstSeen.IsZero() && now.Sub(rec.firstSeen) > chatOffenderStaleAge {
+			chatOffenders.Delete(key)
+		}
+		return true
+	})
+
+	// Cap chatLastMsg entries (sync.Map has no len; count then evict arbitrary if over).
+	n := 0
+	chatLastMsg.Range(func(_, _ interface{}) bool {
+		n++
+		return true
+	})
+	if n > chatModerationMaxEntries {
+		toDrop := n - chatModerationMaxEntries
+		chatLastMsg.Range(func(key, _ interface{}) bool {
+			if toDrop <= 0 {
+				return false
+			}
+			chatLastMsg.Delete(key)
+			toDrop--
+			return true
+		})
+	}
+}
 
 // registerChatStrike เพิ่ม strike ของ ip คืน true เมื่อครบ threshold (เปิด mute แล้ว)
 func registerChatStrike(ip string) bool {
+	maybePruneChatModerationState()
 	now := time.Now()
 	offendersMu.Lock()
 	defer offendersMu.Unlock()
@@ -211,6 +263,7 @@ var chatLastMsg sync.Map // ip -> ข้อความล่าสุดที�
 
 // chatDuplicateMessage คืน true ถ้าข้อความนี้เหมือนล่าสุดที่ส่งมาจาก ip เดียวกัน
 func chatDuplicateMessage(ip, cleanedText string) bool {
+	maybePruneChatModerationState()
 	prev, loaded := chatLastMsg.LoadOrStore(ip, cleanedText)
 	if loaded && prev.(string) == cleanedText {
 		return true
