@@ -24,15 +24,18 @@ func TestMemoryRateLimiterBoundsEntries(t *testing.T) {
 }
 
 func TestPruneChatModerationState(t *testing.T) {
-	oldOffenders := chatOffenders
-	oldLast := chatLastMsg
+	clearSyncMap := func(m *sync.Map) {
+		m.Range(func(k, _ interface{}) bool {
+			m.Delete(k)
+			return true
+		})
+	}
 	t.Cleanup(func() {
-		chatOffenders = oldOffenders
-		chatLastMsg = oldLast
+		clearSyncMap(&chatOffenders)
+		clearSyncMap(&chatLastMsg)
 	})
-
-	chatOffenders = sync.Map{}
-	chatLastMsg = sync.Map{}
+	clearSyncMap(&chatOffenders)
+	clearSyncMap(&chatLastMsg)
 
 	chatOffenders.Store("old", &offenderRecord{firstSeen: time.Now().Add(-2 * time.Hour), strikes: 1})
 	chatOffenders.Store("muted-active", &offenderRecord{until: time.Now().Add(2 * time.Minute)})

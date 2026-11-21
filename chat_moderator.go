@@ -194,7 +194,7 @@ func pruneChatModerationState() {
 		if time.Until(rec.until) > 0 {
 			return true // active mute, keep
 		}
-		if !rec.firstSeen.IsZero() && now.Sub(rec.firstSeen) > chatOffenderStaleAge {
+		if !rec.firstSeen.IsZero() && now.Sub(rec.firstSeen) >= chatOffenderStaleAge {
 			chatOffenders.Delete(key)
 		}
 		return true
